@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FinTrack — Personal Finance Tracker</title>
+    <link rel="stylesheet" href="styles.css" />
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- SheetJS -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <!-- jsPDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    <!-- Supabase JS v2 -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+    <!-- Local config (gitignored) — must load before app.js -->
+    <script src="config.js"></script>
+</head>
+<body>
+
+<!-- ══════════════ AUTH OVERLAY ══════════════ -->
+<div id="authOverlay">
+    <div class="auth-bg-glow"></div>
+    <div class="auth-card">
+
+        <!-- Brand -->
+        <div class="auth-header">
+            <div class="auth-logo-wrap">
+                <span class="auth-logo-icon">₹</span>
+            </div>
+            <h1 class="auth-title">FinTrack</h1>
+            <p class="auth-subtitle">Your personal finance, synced everywhere</p>
+        </div>
+
+        <!-- Tabs -->
+        <div class="auth-tabs">
+            <button class="auth-tab active" data-auth-tab="signin">Sign In</button>
+            <button class="auth-tab" data-auth-tab="signup">Create Account</button>
+        </div>
+
+        <!-- Forms -->
+        <div class="auth-body">
+            <p class="auth-message" id="authMessage"></p>
+
+            <form id="signInForm">
+                <div class="auth-field">
+                    <label class="auth-label">Username</label>
+                    <div class="auth-input-wrap">
+                        <span class="auth-input-prefix">@</span>
+                        <input type="text" class="auth-input auth-input-prefixed" id="signInUsername"
+                            placeholder="yourname" required autocomplete="username"
+                            pattern="[a-zA-Z0-9_]+" />
+                    </div>
+                </div>
+                <button type="submit" class="auth-btn">Sign In →</button>
+            </form>
+
+            <form id="signUpForm" class="hidden">
+                <div class="auth-field">
+                    <label class="auth-label">Choose a username</label>
+                    <div class="auth-input-wrap">
+                        <span class="auth-input-prefix">@</span>
+                        <input type="text" class="auth-input auth-input-prefixed" id="signUpUsername"
+                            placeholder="yourname" required autocomplete="username"
+                            pattern="[a-zA-Z0-9_]+" />
+                    </div>
+                    <p class="auth-field-hint">Letters, numbers and _ only. This is your permanent ID.</p>
+                </div>
+                <button type="submit" class="auth-btn">Create Account →</button>
+            </form>
+        </div>
+
+        <div class="auth-footer">
+            🔒 Your data is private — username is your unique ID
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════ LOADING OVERLAY ══════════════ -->
+<div id="loadingOverlay" class="hidden">
+    <div class="loading-spinner"></div>
+    <p id="loadingText">Loading your data…</p>
+</div>
+
+<!-- Toast Notifications -->
+<div id="toastContainer" class="toast-container"></div>
+
+<!-- Sidebar -->
+<aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <div class="logo">
+            <div class="logo-icon">₹</div>
+            <div class="logo-text">
+                <span class="logo-name">FinTrack</span>
+                <span class="logo-sub">Personal Finance</span>
+            </div>
+        </div>
+        <button class="sidebar-toggle" id="sidebarToggle" title="Toggle Sidebar">&#9776;</button>
+    </div>
+
+    <nav class="sidebar-nav">
+        <div class="nav-section-label">MAIN</div>
+        <a href="#" class="nav-item active" data-section="dashboard">
+            <span class="nav-icon">&#9641;</span>
+            <span class="nav-label">Dashboard</span>
+        </a>
+        <a href="#" class="nav-item" data-section="income">
+            <span class="nav-icon">&#8679;</span>
+            <span class="nav-label">Income</span>
+        </a>
+        <a href="#" class="nav-item" data-section="expenses">
+            <span class="nav-icon">&#8681;</span>
+            <span class="nav-label">Expenses</span>
+        </a>
+        <a href="#" class="nav-item" data-section="transactions">
+            <span class="nav-icon">&#9783;</span>
+            <span class="nav-label">Transactions</span>
+        </a>
+
+        <div class="nav-section-label">INSIGHTS</div>
+        <a href="#" class="nav-item" data-section="analytics">
+            <span class="nav-icon">&#9641;</span>
+            <span class="nav-label">Analytics</span>
+        </a>
+        <a href="#" class="nav-item" data-section="reports">
+            <span class="nav-icon">&#9741;</span>
+            <span class="nav-label">Reports</span>
+        </a>
+        <a href="#" class="nav-item" data-section="budget">
+            <span class="nav-icon">&#9651;</span>
+            <span class="nav-label">Budget</span>
+        </a>
+
+        <div class="nav-section-label">DATA</div>
+        <a href="#" class="nav-item" data-section="settings">
+            <span class="nav-icon">&#9881;</span>
+            <span class="nav-label">Settings & Data</span>
+        </a>
+        <a href="#" class="nav-item" data-section="help">
+            <span class="nav-icon">&#9432;</span>
+            <span class="nav-label">Help & Guide</span>
+        </a>
+    </nav>
+
+    <div class="sidebar-footer">
+        <button class="theme-toggle-btn" id="themeToggle" title="Toggle Theme">
+            <span id="themeIcon">☀</span>
+            <span id="themeLabel">Light Mode</span>
+        </button>
+    </div>
+</aside>
+
+<!-- Main Content -->
+<main class="main-content" id="mainContent">
+    <!-- Top Header -->
+    <header class="top-header">
+        <div class="header-left">
+            <button class="mobile-menu-btn" id="mobileMenuBtn">&#9776;</button>
+            <div class="page-title-wrap">
+                <h1 class="page-title" id="pageTitle">Dashboard</h1>
+                <p class="page-subtitle" id="pageSubtitle">Financial overview</p>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="fin-month-badge" id="finMonthBadge">Loading...</div>
+            <div class="user-pill" id="userPill">
+                <span class="user-avatar" id="userAvatar">U</span>
+                <span class="user-email" id="userEmail"></span>
+                <button class="logout-btn" id="logoutBtn" title="Sign Out">⏻</button>
+            </div>
+            <button class="btn btn-primary btn-sm" id="quickAddExpenseBtn">+ Expense</button>
+            <button class="btn btn-success btn-sm" id="quickAddIncomeBtn">+ Income</button>
+        </div>
+    </header>
+
+    <!-- ══════════════ DASHBOARD ══════════════ -->
+    <section class="content-section active" id="section-dashboard">
+        <div class="fm-selector-bar" id="dashFMSelector"></div>
+        <div class="cards-grid" id="dashboardCards">
+            <div class="card metric-card">
+                <div class="card-icon income-icon">&#8679;</div>
+                <div class="card-body">
+                    <p class="card-label">Total Income</p>
+                    <h2 class="card-value" id="totalIncome">₹0</h2>
+                    <span class="card-trend positive" id="incomeTrend"></span>
+                </div>
+            </div>
+            <div class="card metric-card">
+                <div class="card-icon expense-icon">&#8681;</div>
+                <div class="card-body">
+                    <p class="card-label">Total Expenses</p>
+                    <h2 class="card-value" id="totalExpenses">₹0</h2>
+                    <span class="card-trend negative" id="expenseTrend"></span>
+                </div>
+            </div>
+            <div class="card metric-card">
+                <div class="card-icon balance-icon">&#9670;</div>
+                <div class="card-body">
+                    <p class="card-label">Current Balance</p>
+                    <h2 class="card-value" id="currentBalance">₹0</h2>
+                    <span class="card-trend" id="balanceTrend"></span>
+                </div>
+            </div>
+            <div class="card metric-card">
+                <div class="card-icon savings-icon">&#9733;</div>
+                <div class="card-body">
+                    <p class="card-label">Savings Rate</p>
+                    <h2 class="card-value" id="savingsRate">0%</h2>
+                    <span class="card-trend" id="savingsTrend"></span>
+                </div>
+            </div>
+            <div class="card metric-card">
+                <div class="card-icon fm-income-icon">&#8679;</div>
+                <div class="card-body">
+                    <p class="card-label">This Month Income</p>
+                    <h2 class="card-value" id="fmIncome">₹0</h2>
+                    <span class="card-trend" id="fmIncomeTrend"></span>
+                </div>
+            </div>
+            <div class="card metric-card">
+                <div class="card-icon fm-expense-icon">&#8681;</div>
+                <div class="card-body">
+                    <p class="card-label">This Month Expense</p>
+                    <h2 class="card-value" id="fmExpense">₹0</h2>
+                    <span class="card-trend" id="fmExpenseTrend"></span>
+                </div>
+            </div>
+            <div class="card metric-card">
+                <div class="card-icon budget-icon">&#9661;</div>
+                <div class="card-body">
+                    <p class="card-label">Budget Utilization</p>
+                    <h2 class="card-value" id="budgetUtil">0%</h2>
+                    <span class="card-trend" id="budgetTrend"></span>
+                </div>
+            </div>
+            <div class="card metric-card">
+                <div class="card-icon remaining-icon">&#9654;</div>
+                <div class="card-body">
+                    <p class="card-label">Budget Remaining</p>
+                    <h2 class="card-value" id="budgetRemaining">₹0</h2>
+                    <span class="card-trend" id="remainingTrend"></span>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid-2col">
+            <div class="card chart-card">
+                <div class="card-header">
+                    <h3>Expense Distribution</h3>
+                    <span class="card-badge">This Month</span>
+                </div>
+                <div class="chart-wrap"><canvas id="dashPieChart"></canvas></div>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header">
+                    <h3>Income vs Expense Trend</h3>
+                    <span class="card-badge">Last 6 Months</span>
+                </div>
+                <div class="chart-wrap"><canvas id="dashTrendChart"></canvas></div>
+            </div>
+        </div>
+
+        <div class="grid-2col">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Recent Transactions</h3>
+                    <button class="btn btn-ghost btn-sm" onclick="navigate('transactions')">View All</button>
+                </div>
+                <div id="recentTransactions" class="recent-list"></div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h3>Budget Overview</h3>
+                    <span class="card-badge" id="budgetMonthLabel"></span>
+                </div>
+                <div id="budgetOverview" class="budget-overview-list"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ══════════════ INCOME ══════════════ -->
+    <section class="content-section" id="section-income">
+        <div class="section-toolbar">
+            <div class="toolbar-left">
+                <input type="text" class="search-input" id="incomeSearch" placeholder="Search income..." />
+                <select class="filter-select" id="incomeCategoryFilter">
+                    <option value="">All Categories</option>
+                    <option>Salary</option><option>Freelance</option><option>Bonus</option>
+                    <option>Investment</option><option>Business</option><option>Refund</option>
+                    <option>Gift</option><option>Other</option>
+                </select>
+                <select class="filter-select" id="incomeDateFilter">
+                    <option value="all">All Time</option>
+                    <option value="today">Today</option>
+                    <option value="yesterday">Yesterday</option>
+                    <option value="last7">Last 7 Days</option>
+                    <option value="last30">Last 30 Days</option>
+                    <option value="thisFinMonth">This Financial Month</option>
+                    <option value="lastFinMonth">Last Financial Month</option>
+                    <option value="thisYear">This Year</option>
+                    <option value="selectFinMonth">Specific Month…</option>
+                </select>
+                <select class="filter-select hidden" id="incomeFMPicker">
+                    <option value="">Select Month…</option>
+                </select>
+            </div>
+            <button class="btn btn-success" id="addIncomeBtn">+ Add Income</button>
+        </div>
+        <div class="card">
+            <table class="data-table" id="incomeTable">
+                <thead>
+                    <tr>
+                        <th data-sort="date">Date &#8597;</th>
+                        <th data-sort="source">Source &#8597;</th>
+                        <th data-sort="category">Category &#8597;</th>
+                        <th data-sort="amount">Amount &#8597;</th>
+                        <th>Notes</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="incomeTableBody"></tbody>
+            </table>
+            <div class="pagination" id="incomePagination"></div>
+        </div>
+    </section>
+
+    <!-- ══════════════ EXPENSES ══════════════ -->
+    <section class="content-section" id="section-expenses">
+        <div class="section-toolbar">
+            <div class="toolbar-left">
+                <input type="text" class="search-input" id="expenseSearch" placeholder="Search expenses..." />
+                <select class="filter-select" id="expenseCategoryFilter">
+                    <option value="">All Categories</option>
+                    <option>Food</option><option>Shopping</option><option>Travel</option>
+                    <option>Fuel</option><option>Rent</option><option>EMI</option>
+                    <option>Utilities</option><option>Entertainment</option><option>Medical</option>
+                    <option>Education</option><option>Investment</option><option>Family</option>
+                    <option>Gifts</option><option>Subscription</option><option>Other</option>
+                </select>
+                <select class="filter-select" id="expenseDateFilter">
+                    <option value="all">All Time</option>
+                    <option value="today">Today</option>
+                    <option value="yesterday">Yesterday</option>
+                    <option value="last7">Last 7 Days</option>
+                    <option value="last30">Last 30 Days</option>
+                    <option value="thisFinMonth">This Financial Month</option>
+                    <option value="lastFinMonth">Last Financial Month</option>
+                    <option value="thisYear">This Year</option>
+                    <option value="selectFinMonth">Specific Month…</option>
+                </select>
+                <select class="filter-select hidden" id="expenseFMPicker">
+                    <option value="">Select Month…</option>
+                </select>
+            </div>
+            <button class="btn btn-primary" id="addExpenseBtn">+ Add Expense</button>
+        </div>
+        <div class="card">
+            <table class="data-table" id="expenseTable">
+                <thead>
+                    <tr>
+                        <th data-sort="date">Date &#8597;</th>
+                        <th data-sort="time">Time &#8597;</th>
+                        <th data-sort="category">Category &#8597;</th>
+                        <th data-sort="description">Description &#8597;</th>
+                        <th data-sort="amount">Amount &#8597;</th>
+                        <th>Comments</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="expenseTableBody"></tbody>
+            </table>
+            <div class="pagination" id="expensePagination"></div>
+        </div>
+    </section>
+
+    <!-- ══════════════ TRANSACTIONS ══════════════ -->
+    <section class="content-section" id="section-transactions">
+        <div class="section-toolbar">
+            <div class="toolbar-left flex-wrap">
+                <input type="text" class="search-input" id="txSearch" placeholder="Search transactions..." />
+                <select class="filter-select" id="txTypeFilter">
+                    <option value="all">All Types</option>
+                    <option value="income">Income</option>
+                    <option value="expense">Expense</option>
+                </select>
+                <select class="filter-select" id="txCategoryFilter">
+                    <option value="">All Categories</option>
+                </select>
+                <select class="filter-select" id="txDateFilter">
+                    <option value="all">All Time</option>
+                    <option value="today">Today</option>
+                    <option value="yesterday">Yesterday</option>
+                    <option value="last7">Last 7 Days</option>
+                    <option value="last30">Last 30 Days</option>
+                    <option value="thisFinMonth">This Financial Month</option>
+                    <option value="lastFinMonth">Last Financial Month</option>
+                    <option value="thisYear">This Year</option>
+                    <option value="selectFinMonth">Specific Month…</option>
+                    <option value="custom">Custom Range</option>
+                </select>
+                <select class="filter-select hidden" id="txFMPicker">
+                    <option value="">Select Month…</option>
+                </select>
+                <div id="txCustomRange" class="custom-range hidden">
+                    <input type="date" id="txDateFrom" class="date-input" />
+                    <span>to</span>
+                    <input type="date" id="txDateTo" class="date-input" />
+                </div>
+                <input type="number" class="filter-input" id="txMinAmount" placeholder="Min ₹" />
+                <input type="number" class="filter-input" id="txMaxAmount" placeholder="Max ₹" />
+            </div>
+            <div class="toolbar-right">
+                <button class="btn btn-ghost btn-sm" id="txExportCsv">CSV</button>
+                <button class="btn btn-ghost btn-sm" id="txExportExcel">Excel</button>
+                <button class="btn btn-ghost btn-sm" id="txExportPdf">PDF</button>
+            </div>
+        </div>
+        <div class="card">
+            <div class="tx-summary-bar" id="txSummaryBar"></div>
+            <table class="data-table" id="txTable">
+                <thead>
+                    <tr>
+                        <th data-sort="date">Date &#8597;</th>
+                        <th data-sort="time">Time &#8597;</th>
+                        <th data-sort="type">Type &#8597;</th>
+                        <th data-sort="category">Category &#8597;</th>
+                        <th data-sort="description">Description &#8597;</th>
+                        <th data-sort="amount">Amount &#8597;</th>
+                        <th>Notes</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="txTableBody"></tbody>
+            </table>
+            <div class="pagination" id="txPagination"></div>
+        </div>
+    </section>
+
+    <!-- ══════════════ ANALYTICS ══════════════ -->
+    <section class="content-section" id="section-analytics">
+        <div class="section-toolbar">
+            <div class="toolbar-left">
+                <select class="filter-select" id="analyticsDateFilter">
+                    <option value="thisFinMonth">This Financial Month</option>
+                    <option value="lastFinMonth">Last Financial Month</option>
+                    <option value="last3months">Last 3 Months</option>
+                    <option value="last6months">Last 6 Months</option>
+                    <option value="thisYear">This Year</option>
+                    <option value="all">All Time</option>
+                </select>
+            </div>
+        </div>
+        <div class="grid-2col">
+            <div class="card chart-card">
+                <div class="card-header"><h3>Expense Distribution</h3><span class="card-badge">By Category</span></div>
+                <div class="chart-wrap"><canvas id="pieChart"></canvas></div>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header"><h3>Income vs Expense Trend</h3><span class="card-badge">Financial Months</span></div>
+                <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+            </div>
+        </div>
+        <div class="grid-2col">
+            <div class="card chart-card">
+                <div class="card-header"><h3>Category Spending</h3><span class="card-badge">Highest to Lowest</span></div>
+                <div class="chart-wrap chart-wrap-tall"><canvas id="barChart"></canvas></div>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header"><h3>Budget vs Actual</h3><span class="card-badge">By Category</span></div>
+                <div class="chart-wrap chart-wrap-tall"><canvas id="budgetChart"></canvas></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ══════════════ REPORTS ══════════════ -->
+    <section class="content-section" id="section-reports">
+        <div class="section-toolbar">
+            <div class="toolbar-left">
+                <select class="filter-select" id="reportType">
+                    <option value="finMonth">Financial Month Report</option>
+                    <option value="yearly">Yearly Report</option>
+                    <option value="category">Category Report</option>
+                </select>
+                <select class="filter-select" id="reportYear"></select>
+            </div>
+            <div class="toolbar-right">
+                <button class="btn btn-ghost btn-sm" id="reportExportPdf">Export PDF</button>
+                <button class="btn btn-ghost btn-sm" id="reportExportExcel">Export Excel</button>
+            </div>
+        </div>
+        <div id="reportContent"></div>
+    </section>
+
+    <!-- ══════════════ BUDGET ══════════════ -->
+    <section class="content-section" id="section-budget">
+        <div class="grid-2col">
+            <div class="card">
+                <div class="card-header"><h3>Monthly Budget</h3></div>
+                <div class="budget-form">
+                    <label class="form-label">Overall Monthly Budget (₹)</label>
+                    <div class="input-group">
+                        <input type="number" class="form-input" id="monthlyBudgetInput" placeholder="Enter budget amount" />
+                        <button class="btn btn-primary" id="saveMonthlyBudget">Save</button>
+                    </div>
+                    <div class="budget-status-card" id="monthlyBudgetStatus"></div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header"><h3>Category Budget</h3></div>
+                <div class="budget-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Category</label>
+                            <select class="form-input" id="budgetCategorySelect">
+                                <option value="">Select Category</option>
+                                <option>Food</option><option>Shopping</option><option>Travel</option>
+                                <option>Fuel</option><option>Rent</option><option>EMI</option>
+                                <option>Utilities</option><option>Entertainment</option><option>Medical</option>
+                                <option>Education</option><option>Investment</option><option>Family</option>
+                                <option>Gifts</option><option>Subscription</option><option>Other</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Amount (₹)</label>
+                            <input type="number" class="form-input" id="budgetAmountInput" placeholder="Budget amount" />
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" id="saveCategoryBudget">Set Budget</button>
+                </div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <h3>Budget Utilization</h3>
+                <span class="card-badge" id="budgetUtilMonthLabel"></span>
+            </div>
+            <div id="budgetProgressList" class="budget-progress-list"></div>
+        </div>
+    </section>
+
+    <!-- ══════════════ SETTINGS & DATA ══════════════ -->
+    <section class="content-section" id="section-settings">
+        <div class="grid-2col">
+            <div class="card">
+                <div class="card-header"><h3>App Settings</h3></div>
+                <div class="settings-list">
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <p class="setting-name">Currency</p>
+                            <p class="setting-desc">Default display currency</p>
+                        </div>
+                        <select class="form-input setting-control" id="currencySetting">
+                            <option value="INR">₹ INR</option>
+                            <option value="USD">$ USD</option>
+                            <option value="EUR">€ EUR</option>
+                            <option value="GBP">£ GBP</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <p class="setting-name">Theme</p>
+                            <p class="setting-desc">Application appearance</p>
+                        </div>
+                        <select class="form-input setting-control" id="themeSetting">
+                            <option value="dark">Dark</option>
+                            <option value="light">Light</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <p class="setting-name">Financial Month Start Day</p>
+                            <p class="setting-desc" id="fmRangePreview">e.g. day 22 → Jun 22 to Jul 21</p>
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:center">
+                            <input type="number" class="form-input setting-control" id="finMonthStartDay"
+                                min="1" max="28" placeholder="22" style="width:72px;text-align:center" />
+                            <button class="btn btn-primary btn-sm" id="saveFinMonthStartDay">Save</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header"><h3>Quick Actions</h3></div>
+                <div class="quick-actions-grid">
+                    <button class="btn btn-primary" id="quickAddExpenseBtn2">+ Add Expense</button>
+                    <button class="btn btn-success" id="quickAddIncomeBtn2">+ Add Income</button>
+                    <button class="btn btn-ghost" id="exportJsonBtn">Export JSON</button>
+                    <button class="btn btn-ghost" id="openJsonViewerBtn">View JSON</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header"><h3>Data Management</h3></div>
+            <div class="data-management-grid">
+                <div class="data-action-card">
+                    <div class="data-action-icon">&#8595;</div>
+                    <h4>Backup Data</h4>
+                    <p>Download complete data as JSON</p>
+                    <button class="btn btn-ghost btn-sm" id="backupDataBtn">Backup</button>
+                </div>
+                <div class="data-action-card">
+                    <div class="data-action-icon">&#8593;</div>
+                    <h4>Restore Data</h4>
+                    <p>Upload and restore from backup</p>
+                    <button class="btn btn-ghost btn-sm" id="restoreDataBtn">Restore</button>
+                    <input type="file" id="restoreFileInput" accept=".json" style="display:none" />
+                </div>
+                <div class="data-action-card">
+                    <div class="data-action-icon">&#8659;</div>
+                    <h4>Export CSV</h4>
+                    <p>Download transactions as CSV</p>
+                    <button class="btn btn-ghost btn-sm" id="exportCsvBtn">Export</button>
+                </div>
+                <div class="data-action-card">
+                    <div class="data-action-icon">&#8659;</div>
+                    <h4>Export Excel</h4>
+                    <p>Download as Excel spreadsheet</p>
+                    <button class="btn btn-ghost btn-sm" id="exportExcelBtn">Export</button>
+                </div>
+                <div class="data-action-card">
+                    <div class="data-action-icon">&#8659;</div>
+                    <h4>Export PDF</h4>
+                    <p>Download report as PDF</p>
+                    <button class="btn btn-ghost btn-sm" id="exportPdfBtn">Export</button>
+                </div>
+                <div class="data-action-card danger-card">
+                    <div class="data-action-icon">&#9888;</div>
+                    <h4>Reset All Data</h4>
+                    <p>Permanently delete all records</p>
+                    <button class="btn btn-danger btn-sm" id="resetDataBtn">Reset</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ══════════════ HELP & GUIDE ══════════════ -->
+    <section class="content-section" id="section-help">
+
+        <!-- Getting Started Banner -->
+        <div class="help-banner">
+            <div class="help-banner-icon">🚀</div>
+            <div class="help-banner-body">
+                <h2>Welcome to FinTrack</h2>
+                <p>Your personal finance tracker — works on all your devices, keeps your data private and in sync.</p>
+            </div>
+        </div>
+
+        <!-- First Time Notice -->
+        <div class="help-notice">
+            <span class="help-notice-icon">⚠️</span>
+            <div>
+                <strong>First time here?</strong> The app loads with <em>sample data</em> so you can explore all features.
+                When you're ready to track your real finances, go to
+                <strong>Settings &amp; Data → Reset All Data</strong> to clear it and start fresh.
+            </div>
+        </div>
+
+        <div class="help-grid">
+
+            <!-- Quick Steps -->
+            <div class="help-card help-card-wide">
+                <div class="help-card-header">
+                    <span class="help-card-icon">✅</span>
+                    <h3>Quick Start — 4 Steps</h3>
+                </div>
+                <div class="help-steps">
+                    <div class="help-step">
+                        <div class="help-step-num">1</div>
+                        <div>
+                            <strong>Clear sample data</strong>
+                            <p>Go to <em>Settings &amp; Data</em> → scroll to the bottom → click <strong>Reset All Data</strong>. This wipes the demo transactions so you start clean.</p>
+                        </div>
+                    </div>
+                    <div class="help-step">
+                        <div class="help-step-num">2</div>
+                        <div>
+                            <strong>Set your financial month start day</strong>
+                            <p>Go to <em>Settings &amp; Data → Financial Month Start Day</em>. If your salary arrives on the 22nd, set it to <strong>22</strong>. This defines your monthly cycle for all reports.</p>
+                        </div>
+                    </div>
+                    <div class="help-step">
+                        <div class="help-step-num">3</div>
+                        <div>
+                            <strong>Add your income</strong>
+                            <p>Click <strong>+ Income</strong> in the top-right or go to the <em>Income</em> page. Enter your salary, freelance payments, or any earnings.</p>
+                        </div>
+                    </div>
+                    <div class="help-step">
+                        <div class="help-step-num">4</div>
+                        <div>
+                            <strong>Log your expenses daily</strong>
+                            <p>Click <strong>+ Expense</strong> (top-right) to quickly add a spend. Do this regularly for accurate reports.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dashboard -->
+            <div class="help-card">
+                <div class="help-card-header">
+                    <span class="help-card-icon">📊</span>
+                    <h3>Dashboard</h3>
+                </div>
+                <ul class="help-list">
+                    <li>Shows <strong>8 metric cards</strong>: total income, expenses, balance, savings rate, and the same 4 for the current financial month.</li>
+                    <li>Click any <strong>month chip</strong> at the top to view a different month's summary.</li>
+                    <li>The <strong>pie chart</strong> shows spending by category for the selected month.</li>
+                    <li>The <strong>trend chart</strong> shows income vs. expense over the last 6 months.</li>
+                    <li>The <strong>budget widget</strong> shows how much of each budget you've used this month.</li>
+                </ul>
+            </div>
+
+            <!-- Income -->
+            <div class="help-card">
+                <div class="help-card-header">
+                    <span class="help-card-icon">💰</span>
+                    <h3>Income</h3>
+                </div>
+                <ul class="help-list">
+                    <li>Add all money you receive: salary, freelance, business, investments, gifts, refunds.</li>
+                    <li>Each record needs: <strong>Amount, Date, Source</strong> (who paid you), and <strong>Category</strong>.</li>
+                    <li>Use the <strong>search bar</strong> to find a specific income entry.</li>
+                    <li>Filter by category or pick <strong>Specific Month</strong> from the date filter to see a single financial month.</li>
+                    <li>Click column headers to <strong>sort</strong> the table.</li>
+                </ul>
+            </div>
+
+            <!-- Expenses -->
+            <div class="help-card">
+                <div class="help-card-header">
+                    <span class="help-card-icon">💸</span>
+                    <h3>Expenses</h3>
+                </div>
+                <ul class="help-list">
+                    <li>Log every spend here: food, rent, EMI, fuel, shopping, subscriptions, etc.</li>
+                    <li>Each record needs: <strong>Amount, Date, Category</strong>, and a short <strong>Description</strong>.</li>
+                    <li><strong>Time</strong> is optional but useful for daily tracking.</li>
+                    <li>Filter by category, date range, or a <strong>specific financial month</strong>.</li>
+                    <li>Click <strong>Edit</strong> on any row to update it, or <strong>Delete</strong> to remove it.</li>
+                </ul>
+            </div>
+
+            <!-- Transactions -->
+            <div class="help-card">
+                <div class="help-card-header">
+                    <span class="help-card-icon">🔄</span>
+                    <h3>Transactions</h3>
+                </div>
+                <ul class="help-list">
+                    <li>A combined view of all income and expenses in one table.</li>
+                    <li>Filter by <strong>type</strong> (income / expense), category, date range, or amount range.</li>
+                    <li>The <strong>summary bar</strong> at the top shows totals for your current filter.</li>
+                    <li>Export the filtered view to <strong>CSV, Excel, or PDF</strong> using the buttons on the right.</li>
+                </ul>
+            </div>
+
+            <!-- Analytics -->
+            <div class="help-card">
+                <div class="help-card-header">
+                    <span class="help-card-icon">📈</span>
+                    <h3>Analytics</h3>
+                </div>
+                <ul class="help-list">
+                    <li><strong>Spending Breakdown</strong> — doughnut chart showing expense share by category.</li>
+                    <li><strong>Income vs. Expense Trend</strong> — 6-month line chart showing income, expenses, and balance.</li>
+                    <li><strong>Top Categories</strong> — horizontal bar chart ranked by total spend.</li>
+                    <li><strong>Budget vs. Actual</strong> — grouped bar chart comparing your budget to real spend per category.</li>
+                    <li>Use the date filter at the top to change the period for all charts.</li>
+                </ul>
+            </div>
+
+            <!-- Reports -->
+            <div class="help-card">
+                <div class="help-card-header">
+                    <span class="help-card-icon">📋</span>
+                    <h3>Reports</h3>
+                </div>
+                <ul class="help-list">
+                    <li><strong>Financial Month Report</strong> — month-by-month summary for the last 6 FM cycles: income, expenses, savings, savings %, top category.</li>
+                    <li><strong>Yearly Report</strong> — full annual breakdown with monthly totals and annual averages.</li>
+                    <li><strong>Category Report</strong> — all-time totals per category, average transaction size, and % of total spend.</li>
+                    <li>Export any report to <strong>PDF or Excel</strong> using the export buttons.</li>
+                </ul>
+            </div>
+
+            <!-- Budget -->
+            <div class="help-card">
+                <div class="help-card-header">
+                    <span class="help-card-icon">🎯</span>
+                    <h3>Budget</h3>
+                </div>
+                <ul class="help-list">
+                    <li>Set a <strong>Monthly Budget</strong> (overall spending limit for the FM) at the top.</li>
+                    <li>Set <strong>category budgets</strong> — e.g. Food ₹8,000, Shopping ₹5,000.</li>
+                    <li>Progress bars turn <strong>yellow at 75%</strong> and <strong>red at 100%</strong>.</li>
+                    <li>Budget alerts also appear in the Dashboard budget widget.</li>
+                    <li>Click <strong>Remove</strong> next to any category budget to delete it.</li>
+                </ul>
+            </div>
+
+            <!-- Settings -->
+            <div class="help-card">
+                <div class="help-card-header">
+                    <span class="help-card-icon">⚙️</span>
+                    <h3>Settings &amp; Data</h3>
+                </div>
+                <ul class="help-list">
+                    <li><strong>Financial Month Start Day</strong> — set the day your salary arrives (e.g. 22 = Jun 22 → Jul 21).</li>
+                    <li><strong>Currency</strong> — switch between ₹ INR, $ USD, € EUR, £ GBP.</li>
+                    <li><strong>Theme</strong> — toggle dark / light mode (also available in the sidebar).</li>
+                    <li><strong>Export</strong> your data as JSON, CSV, Excel, or PDF anytime.</li>
+                    <li><strong>Restore from Backup</strong> — import a previously exported JSON file to reload your data.</li>
+                    <li><strong>Reset All Data</strong> — permanently deletes everything from the cloud. Use this to clear the sample data when you start.</li>
+                </ul>
+            </div>
+
+            <!-- Multi-device -->
+            <div class="help-card">
+                <div class="help-card-header">
+                    <span class="help-card-icon">📱</span>
+                    <h3>Multi-Device Sync</h3>
+                </div>
+                <ul class="help-list">
+                    <li>Your data is stored in the <strong>cloud (Supabase)</strong>, not just this browser.</li>
+                    <li>Open the app on your phone or another laptop, sign in with the <strong>same email and password</strong>, and all your data is there.</li>
+                    <li>Each user's data is completely <strong>private</strong> — no one else can see your records.</li>
+                    <li>Sign out using the <strong>⏻ button</strong> next to your email in the top-right.</li>
+                </ul>
+            </div>
+
+            <!-- Financial Month explained -->
+            <div class="help-card">
+                <div class="help-card-header">
+                    <span class="help-card-icon">📅</span>
+                    <h3>What is a Financial Month?</h3>
+                </div>
+                <ul class="help-list">
+                    <li>A <strong>Financial Month (FM)</strong> is a custom cycle that matches when you actually get paid, not the calendar month.</li>
+                    <li>Example: if your start day is <strong>22</strong>, then <em>June FM</em> = Jun 22 → Jul 21.</li>
+                    <li>All Dashboard cards, reports, and budgets use your FM cycle.</li>
+                    <li>You can change the start day anytime in <strong>Settings</strong> and everything recalculates instantly.</li>
+                </ul>
+            </div>
+
+            <!-- Keyboard tips -->
+            <div class="help-card">
+                <div class="help-card-header">
+                    <span class="help-card-icon">💡</span>
+                    <h3>Tips &amp; Shortcuts</h3>
+                </div>
+                <ul class="help-list">
+                    <li>Use <strong>+ Expense</strong> and <strong>+ Income</strong> buttons in the header for quick entry from any page.</li>
+                    <li>Click any <strong>column header</strong> in a table to sort by that column. Click again to reverse.</li>
+                    <li>The <strong>sidebar</strong> can be collapsed (click ☰) to give you more screen space.</li>
+                    <li>Back up your data regularly using <strong>Export JSON</strong> in Settings so you have a local copy.</li>
+                    <li>Use <strong>Specific Month</strong> in the date filter on Income/Expense/Transaction pages to view any past FM.</li>
+                </ul>
+            </div>
+
+        </div><!-- end help-grid -->
+    </section>
+
+</main>
+
+<!-- ══════════════ MODALS ══════════════ -->
+
+<!-- Add/Edit Expense Modal -->
+<div class="modal-overlay" id="expenseModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="expenseModalTitle">Add Expense</h2>
+            <button class="modal-close" data-modal="expenseModal">&#10005;</button>
+        </div>
+        <form id="expenseForm" class="modal-form" novalidate>
+            <input type="hidden" id="expenseEditId" />
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Amount (₹) *</label>
+                    <input type="number" class="form-input" id="expenseAmount" placeholder="0.00" step="0.01" required />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Category *</label>
+                    <select class="form-input" id="expenseCategory" required>
+                        <option value="">Select Category</option>
+                        <option>Food</option><option>Shopping</option><option>Travel</option>
+                        <option>Fuel</option><option>Rent</option><option>EMI</option>
+                        <option>Utilities</option><option>Entertainment</option><option>Medical</option>
+                        <option>Education</option><option>Investment</option><option>Family</option>
+                        <option>Gifts</option><option>Subscription</option><option>Other</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Date *</label>
+                    <input type="date" class="form-input" id="expenseDate" required />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Time *</label>
+                    <input type="time" class="form-input" id="expenseTime" required />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Description *</label>
+                <input type="text" class="form-input" id="expenseDescription" placeholder="What did you spend on?" required />
+            </div>
+            <div class="form-group">
+                <label class="form-label">Additional Comments</label>
+                <textarea class="form-input form-textarea" id="expenseComments" placeholder="Optional notes..."></textarea>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-ghost" data-modal="expenseModal">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Expense</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Add/Edit Income Modal -->
+<div class="modal-overlay" id="incomeModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="incomeModalTitle">Add Income</h2>
+            <button class="modal-close" data-modal="incomeModal">&#10005;</button>
+        </div>
+        <form id="incomeForm" class="modal-form" novalidate>
+            <input type="hidden" id="incomeEditId" />
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Amount (₹) *</label>
+                    <input type="number" class="form-input" id="incomeAmount" placeholder="0.00" step="0.01" required />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Category *</label>
+                    <select class="form-input" id="incomeCategory" required>
+                        <option value="">Select Category</option>
+                        <option>Salary</option><option>Freelance</option><option>Bonus</option>
+                        <option>Investment</option><option>Business</option><option>Refund</option>
+                        <option>Gift</option><option>Other</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Date *</label>
+                    <input type="date" class="form-input" id="incomeDate" required />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Source *</label>
+                    <input type="text" class="form-input" id="incomeSource" placeholder="e.g. Employer, Client name" required />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <textarea class="form-input form-textarea" id="incomeNotes" placeholder="Optional notes..."></textarea>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-ghost" data-modal="incomeModal">Cancel</button>
+                <button type="submit" class="btn btn-success">Save Income</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Confirm Modal -->
+<div class="modal-overlay" id="confirmModal">
+    <div class="modal modal-sm">
+        <div class="modal-header">
+            <h2>Confirm Action</h2>
+            <button class="modal-close" data-modal="confirmModal">&#10005;</button>
+        </div>
+        <div class="modal-body">
+            <p id="confirmMessage">Are you sure?</p>
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-ghost" data-modal="confirmModal">Cancel</button>
+            <button class="btn btn-danger" id="confirmActionBtn">Confirm</button>
+        </div>
+    </div>
+</div>
+
+<!-- JSON Viewer Modal -->
+<div class="modal-overlay" id="jsonViewerModal">
+    <div class="modal modal-lg">
+        <div class="modal-header">
+            <h2>JSON Data Viewer</h2>
+            <button class="modal-close" data-modal="jsonViewerModal">&#10005;</button>
+        </div>
+        <div class="json-toolbar">
+            <button class="btn btn-ghost btn-sm" id="copyJsonBtn">Copy JSON</button>
+            <button class="btn btn-ghost btn-sm" id="downloadJsonBtn">Download JSON</button>
+            <label class="btn btn-ghost btn-sm" for="importJsonFile">Import JSON</label>
+            <input type="file" id="importJsonFile" accept=".json" style="display:none" />
+        </div>
+        <div class="json-viewer" id="jsonViewer"></div>
+    </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
