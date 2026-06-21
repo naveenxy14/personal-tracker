@@ -588,6 +588,8 @@ const PAGE_TITLES = {
 function navigate(section) {
     document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
     document.querySelector(`.nav-item[data-section="${section}"]`)?.classList.add('active');
+    document.querySelectorAll('.mobile-nav-item').forEach(el=>el.classList.remove('active'));
+    document.querySelector(`.mobile-nav-item[data-section="${section}"]`)?.classList.add('active');
     document.querySelectorAll('.content-section').forEach(el=>el.classList.remove('active'));
     document.getElementById(`section-${section}`)?.classList.add('active');
     const [title,sub] = PAGE_TITLES[section]||[section,''];
@@ -1381,6 +1383,9 @@ function initEventListeners() {
 
     // Navigation
     document.querySelectorAll('.nav-item[data-section]').forEach(el=>{
+        el.addEventListener('click',e=>{ e.preventDefault(); navigate(el.dataset.section); });
+    });
+    document.querySelectorAll('.mobile-nav-item[data-section]').forEach(el=>{
         el.addEventListener('click',e=>{ e.preventDefault(); navigate(el.dataset.section); });
     });
 

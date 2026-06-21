@@ -2,8 +2,16 @@
 <html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="FinTrack" />
+    <meta name="theme-color" content="#7c6fe0" />
     <title>FinTrack — Personal Finance Tracker</title>
+    <!-- Favicon: inline SVG as data URI -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%237c6fe0'/%3E%3Ctext x='50%25' y='54%25' dominant-baseline='middle' text-anchor='middle' font-size='36' font-family='Arial' font-weight='bold' fill='white'%3E%E2%82%B9%3C/text%3E%3C/svg%3E" />
+    <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%237c6fe0'/%3E%3Ctext x='50%25' y='54%25' dominant-baseline='middle' text-anchor='middle' font-size='36' font-family='Arial' font-weight='bold' fill='white'%3E%E2%82%B9%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="styles.css" />
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -999,5 +1007,24 @@
 </div>
 
 <script src="app.js"></script>
+
+<!-- Mobile Bottom Navigation -->
+<nav class="mobile-bottom-nav" id="mobileBottomNav">
+    <a class="mobile-nav-item active" data-section="dashboard">
+        <span>⊡</span><span>Home</span>
+    </a>
+    <a class="mobile-nav-item" data-section="expenses">
+        <span>↓</span><span>Expenses</span>
+    </a>
+    <a class="mobile-nav-item" data-section="income">
+        <span>↑</span><span>Income</span>
+    </a>
+    <a class="mobile-nav-item" data-section="analytics">
+        <span>📈</span><span>Analytics</span>
+    </a>
+    <a class="mobile-nav-item" data-section="budget">
+        <span>🎯</span><span>Budget</span>
+    </a>
+</nav>
 </body>
 </html>
