@@ -168,7 +168,15 @@ function setAuthMessage(msg, type = 'error') {
    ============================================================ */
 async function loadAllData(userId) {
     // Profile / settings
-    const { data: profile } = await sb.from('profiles').select('*').eq('id', userId).single();
+    const { data: profile, error: profileErr } = await sb.from('profiles').select('*').eq('id', userId).single();
+    if (profileErr) {
+        console.warn('profiles query error:', profileErr);
+        if (profileErr.code !== 'PGRST116') {
+            // Surface in connection diagnostic but keep loading — don't throw
+            const el = document.getElementById('dbStatus');
+            if (el) { el.style.background='rgba(239,68,68,0.12)'; el.style.color='var(--expense-color,#ef4444)'; el.textContent='✕ DB error: '+profileErr.message; }
+        }
+    }
     if (profile) {
         financeData.settings = {
             theme:             profile.theme            || 'dark',
@@ -176,27 +184,32 @@ async function loadAllData(userId) {
             monthlyBudget:     profile.monthly_budget   || 50000,
             finMonthStartDay:  profile.fin_month_start_day || 22
         };
-    } else {
-        // First login — create profile row
-        await sb.from('profiles').insert({ id: userId });
+    } else if (!profileErr) {
+        // No profile yet — create one (first login)
+        const { error: pInsErr } = await sb.from('profiles').insert({ id: userId });
+        if (pInsErr) console.warn('profile insert error:', pInsErr);
     }
 
     // Incomes
-    const { data: incomes } = await sb.from('incomes').select('*').eq('user_id', userId).order('date', { ascending: false });
+    const { data: incomes, error: incErr } = await sb.from('incomes').select('*').eq('user_id', userId).order('date', { ascending: false });
+    if (incErr) console.warn('incomes query error:', incErr);
     financeData.incomes = (incomes || []).map(dbToIncome);
 
     // Expenses
-    const { data: expenses } = await sb.from('expenses').select('*').eq('user_id', userId).order('date', { ascending: false });
+    const { data: expenses, error: expErr } = await sb.from('expenses').select('*').eq('user_id', userId).order('date', { ascending: false });
+    if (expErr) console.warn('expenses query error:', expErr);
     financeData.expenses = (expenses || []).map(dbToExpense);
 
     // Budgets
-    const { data: budgets } = await sb.from('budgets').select('*').eq('user_id', userId);
+    const { data: budgets, error: budErr } = await sb.from('budgets').select('*').eq('user_id', userId);
+    if (budErr) console.warn('budgets query error:', budErr);
     financeData.budgets = (budgets || []).map(r => ({ id: r.id, category: r.category, amount: r.amount }));
 
     financeData.metadata.lastUpdated = new Date().toISOString();
 
-    // Seed sample data for brand-new users
-    if (financeData.incomes.length === 0 && financeData.expenses.length === 0) {
+    // Seed sample data only if every query succeeded with 0 rows (truly new user)
+    const anyQueryFailed = incErr || expErr || budErr;
+    if (!anyQueryFailed && financeData.incomes.length === 0 && financeData.expenses.length === 0) {
         showLoader('Setting up sample data for you…');
         await generateSampleDataForUser(userId);
     }
@@ -221,7 +234,48 @@ async function syncProfile() {
     });
 }
 
+async function checkDbConnection() {
+    const el = document.getElementById('dbStatus');
+    if (!el) return;
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 6000);
+    try {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/profiles?limit=0`, {
+            signal: controller.signal,
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+            }
+        });
+        clearTimeout(tid);
+        if (res.ok || res.status === 401 || res.status === 403) {
+            el.style.background = 'rgba(34,197,94,0.12)';
+            el.style.color = 'var(--income-color, #22c55e)';
+            el.textContent = '✓ Database connected';
+        } else {
+            const txt = await res.text().catch(()=>'');
+            el.style.background = 'rgba(239,68,68,0.12)';
+            el.style.color = 'var(--expense-color, #ef4444)';
+            el.textContent = `✕ DB error ${res.status}: ${txt.slice(0,120)}`;
+        }
+    } catch(e) {
+        clearTimeout(tid);
+        const msg = e.name === 'AbortError' ? 'Timed out — project may be paused at supabase.com/dashboard' : e.message;
+        el.style.background = 'rgba(239,68,68,0.12)';
+        el.style.color = 'var(--expense-color, #ef4444)';
+        el.textContent = `✕ Cannot reach database: ${msg}`;
+    }
+}
+
+function dbErr(error) {
+    const msg = error?.message || error?.hint || error?.details || JSON.stringify(error);
+    const e = new Error(msg || 'Unknown database error');
+    e.supabaseError = error;
+    return e;
+}
+
 async function dbInsertIncome(rec) {
+    if (!currentUser) throw new Error('Not signed in');
     const { data, error } = await sb.from('incomes').insert({
         user_id:  currentUser.id,
         amount:   rec.amount,
@@ -230,24 +284,28 @@ async function dbInsertIncome(rec) {
         category: rec.category,
         notes:    rec.notes
     }).select().single();
-    if (error) throw error;
+    if (error) throw dbErr(error);
+    if (!data) throw new Error('No data returned — check RLS policies');
     return data.id;
 }
 
 async function dbUpdateIncome(id, rec) {
+    if (!currentUser) throw new Error('Not signed in');
     const { error } = await sb.from('incomes').update({
         amount: rec.amount, date: rec.date, source: rec.source,
         category: rec.category, notes: rec.notes
     }).eq('id', id).eq('user_id', currentUser.id);
-    if (error) throw error;
+    if (error) throw dbErr(error);
 }
 
 async function dbDeleteIncome(id) {
+    if (!currentUser) throw new Error('Not signed in');
     const { error } = await sb.from('incomes').delete().eq('id', id).eq('user_id', currentUser.id);
-    if (error) throw error;
+    if (error) throw dbErr(error);
 }
 
 async function dbInsertExpense(rec) {
+    if (!currentUser) throw new Error('Not signed in');
     const { data, error } = await sb.from('expenses').insert({
         user_id:     currentUser.id,
         amount:      rec.amount,
@@ -257,35 +315,41 @@ async function dbInsertExpense(rec) {
         description: rec.description,
         comments:    rec.comments
     }).select().single();
-    if (error) throw error;
+    if (error) throw dbErr(error);
+    if (!data) throw new Error('No data returned — check RLS policies');
     return data.id;
 }
 
 async function dbUpdateExpense(id, rec) {
+    if (!currentUser) throw new Error('Not signed in');
     const { error } = await sb.from('expenses').update({
         amount: rec.amount, date: rec.date, time: rec.time,
         category: rec.category, description: rec.description, comments: rec.comments
     }).eq('id', id).eq('user_id', currentUser.id);
-    if (error) throw error;
+    if (error) throw dbErr(error);
 }
 
 async function dbDeleteExpense(id) {
+    if (!currentUser) throw new Error('Not signed in');
     const { error } = await sb.from('expenses').delete().eq('id', id).eq('user_id', currentUser.id);
-    if (error) throw error;
+    if (error) throw dbErr(error);
 }
 
 async function dbUpsertBudget(category, amount) {
+    if (!currentUser) throw new Error('Not signed in');
     const { data, error } = await sb.from('budgets').upsert(
         { user_id: currentUser.id, category, amount },
         { onConflict: 'user_id,category' }
     ).select().single();
-    if (error) throw error;
+    if (error) throw dbErr(error);
+    if (!data) throw new Error('No data returned — check RLS policies');
     return data.id;
 }
 
 async function dbDeleteBudget(id) {
+    if (!currentUser) throw new Error('Not signed in');
     const { error } = await sb.from('budgets').delete().eq('id', id).eq('user_id', currentUser.id);
-    if (error) throw error;
+    if (error) throw dbErr(error);
 }
 
 /* ============================================================
@@ -332,10 +396,13 @@ async function generateSampleDataForUser(userId) {
         { user_id: userId, category: 'Utilities',     amount: 3000  }
     ]);
 
-    // Batch insert
-    await sb.from('incomes').insert(incomeRows);
-    await sb.from('expenses').insert(expenseRows);
-    await sb.from('budgets').insert(budgetRows);
+    // Batch insert — throw on error so login doesn't loop on silent failures
+    const { error: incErr } = await sb.from('incomes').insert(incomeRows);
+    if (incErr) throw dbErr(incErr);
+    const { error: expErr } = await sb.from('expenses').insert(expenseRows);
+    if (expErr) throw dbErr(expErr);
+    const { error: budErr } = await sb.from('budgets').insert(budgetRows);
+    if (budErr) throw dbErr(budErr);
 
     // Reload fresh from DB so IDs are correct
     const { data: inc } = await sb.from('incomes').select('*').eq('user_id', userId).order('date', { ascending: false });
@@ -582,7 +649,8 @@ const PAGE_TITLES = {
     reports:      ['Reports','Financial reports'],
     budget:       ['Budget','Manage budgets'],
     settings:     ['Settings & Data','App settings and data management'],
-    help:         ['Help & Guide','Learn how to use FinTrack']
+    help:         ['Help & Guide','Learn how to use FinTrack'],
+    terms:        ['Terms of Use','Rules and conditions for using FinTrack']
 };
 
 function navigate(section) {
@@ -1022,7 +1090,7 @@ async function removeBudget(id) {
         financeData.budgets = financeData.budgets.filter(b=>b.id!==id);
         renderBudgetPage();
         showToast('Budget removed','success');
-    } catch(e) { showToast('Failed to remove budget: '+e.message,'error'); }
+    } catch(e) { console.error('removeBudget error:', e); showToast('Failed to remove budget: '+(e.message||String(e)),'error'); }
 }
 
 /* ============================================================
@@ -1067,6 +1135,7 @@ function openAddIncome() {
     document.getElementById('incomeModalTitle').textContent='Add Income';
     document.getElementById('incomeForm').reset();
     document.getElementById('incomeDate').value=new Date().toISOString().split('T')[0];
+    showFormError('incomeFormError', '');
     openModal('incomeModal');
 }
 
@@ -1079,21 +1148,32 @@ function openEditIncome(id) {
     document.getElementById('incomeSource').value=rec.source;
     document.getElementById('incomeCategory').value=rec.category;
     document.getElementById('incomeNotes').value=rec.notes||'';
+    showFormError('incomeFormError', '');
     openModal('incomeModal');
+}
+
+function showFormError(id, msg) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = msg;
+    el.style.display = msg ? 'block' : 'none';
 }
 
 async function saveIncome(e) {
     e.preventDefault();
+    showFormError('incomeFormError', '');
+    if (!currentUser) { showFormError('incomeFormError', 'Not signed in — please refresh the page.'); return; }
+    if (!sb)          { showFormError('incomeFormError', 'App not connected — please refresh the page.'); return; }
     const amount   = parseFloat(document.getElementById('incomeAmount').value);
     const date     = document.getElementById('incomeDate').value;
     const source   = document.getElementById('incomeSource').value.trim();
     const category = document.getElementById('incomeCategory').value;
     const notes    = document.getElementById('incomeNotes').value.trim();
 
-    if (!amount||amount<=0) { showToast('Amount must be greater than 0','error'); return; }
-    if (!date)     { showToast('Date is required','error'); return; }
-    if (!source)   { showToast('Source is required','error'); return; }
-    if (!category) { showToast('Category is required','error'); return; }
+    if (!amount||amount<=0) { showFormError('incomeFormError','Amount must be greater than 0'); return; }
+    if (!date)     { showFormError('incomeFormError','Date is required'); return; }
+    if (!source)   { showFormError('incomeFormError','Source is required'); return; }
+    if (!category) { showFormError('incomeFormError','Category is required'); return; }
 
     const editId = parseInt(document.getElementById('incomeEditId').value);
     try {
@@ -1107,8 +1187,13 @@ async function saveIncome(e) {
             financeData.incomes.unshift({ id:newId, amount, date, source, category, notes });
             showToast('Income added','success');
         }
-    } catch(err) { showToast('Save failed: '+err.message,'error'); return; }
+    } catch(err) {
+        console.error('saveIncome error:', err);
+        showFormError('incomeFormError', 'Save failed: ' + (err.message || String(err)));
+        return;
+    }
 
+    showFormError('incomeFormError', '');
     closeModal('incomeModal');
     renderIncomeTable();
     renderDashboard();
@@ -1123,6 +1208,7 @@ function openAddExpense() {
     document.getElementById('expenseForm').reset();
     document.getElementById('expenseDate').value=new Date().toISOString().split('T')[0];
     document.getElementById('expenseTime').value=new Date().toTimeString().slice(0,5);
+    showFormError('expenseFormError', '');
     openModal('expenseModal');
 }
 
@@ -1136,11 +1222,15 @@ function openEditExpense(id) {
     document.getElementById('expenseCategory').value=rec.category;
     document.getElementById('expenseDescription').value=rec.description;
     document.getElementById('expenseComments').value=rec.comments||'';
+    showFormError('expenseFormError', '');
     openModal('expenseModal');
 }
 
 async function saveExpense(e) {
     e.preventDefault();
+    showFormError('expenseFormError', '');
+    if (!currentUser) { showFormError('expenseFormError', 'Not signed in — please refresh the page.'); return; }
+    if (!sb)          { showFormError('expenseFormError', 'App not connected — please refresh the page.'); return; }
     const amount      = parseFloat(document.getElementById('expenseAmount').value);
     const date        = document.getElementById('expenseDate').value;
     const time        = document.getElementById('expenseTime').value;
@@ -1148,10 +1238,10 @@ async function saveExpense(e) {
     const description = document.getElementById('expenseDescription').value.trim();
     const comments    = document.getElementById('expenseComments').value.trim();
 
-    if (!amount||amount<=0)  { showToast('Amount must be greater than 0','error'); return; }
-    if (!date)               { showToast('Date is required','error'); return; }
-    if (!category)           { showToast('Category is required','error'); return; }
-    if (!description)        { showToast('Description is required','error'); return; }
+    if (!amount||amount<=0)  { showFormError('expenseFormError','Amount must be greater than 0'); return; }
+    if (!date)               { showFormError('expenseFormError','Date is required'); return; }
+    if (!category)           { showFormError('expenseFormError','Category is required'); return; }
+    if (!description)        { showFormError('expenseFormError','Description is required'); return; }
 
     const editId = parseInt(document.getElementById('expenseEditId').value);
     try {
@@ -1165,8 +1255,13 @@ async function saveExpense(e) {
             financeData.expenses.unshift({ id:newId, amount, date, time, category, description, comments });
             showToast('Expense added','success');
         }
-    } catch(err) { showToast('Save failed: '+err.message,'error'); return; }
+    } catch(err) {
+        console.error('saveExpense error:', err);
+        showFormError('expenseFormError', 'Save failed: ' + (err.message || String(err)));
+        return;
+    }
 
+    showFormError('expenseFormError', '');
     closeModal('expenseModal');
     renderExpenseTable();
     renderDashboard();
@@ -1201,7 +1296,7 @@ async function executeDelete() {
         pendingDelete=null;
         renderIncomeTable(); renderExpenseTable(); renderTransactionTable(); renderDashboard();
         showToast('Record deleted','success');
-    } catch(err) { showToast('Delete failed: '+err.message,'error'); }
+    } catch(err) { console.error('delete error:', err); showToast('Delete failed: '+(err.message||String(err)),'error'); }
 }
 
 /* ============================================================
@@ -1459,18 +1554,21 @@ function initEventListeners() {
         showToast('Monthly budget updated','success');
     });
     document.getElementById('saveCategoryBudget')?.addEventListener('click',async()=>{
+        showFormError('budgetFormError','');
         const cat=document.getElementById('budgetCategorySelect').value;
         const amt=parseFloat(document.getElementById('budgetAmountInput').value);
-        if(!cat){ showToast('Select a category','error'); return; }
-        if(!amt||amt<=0){ showToast('Enter a valid amount','error'); return; }
+        if(!cat){ showFormError('budgetFormError','Select a category'); return; }
+        if(!amt||amt<=0){ showFormError('budgetFormError','Enter a valid amount'); return; }
+        if(!currentUser){ showFormError('budgetFormError','Not signed in — please refresh the page.'); return; }
         try {
             const newId=await dbUpsertBudget(cat,amt);
             const idx=financeData.budgets.findIndex(b=>b.category===cat);
             if(idx>=0) financeData.budgets[idx].amount=amt;
             else financeData.budgets.push({id:newId,category:cat,amount:amt});
+            showFormError('budgetFormError','');
             renderBudgetPage();
             showToast(`Budget set for ${cat}`,'success');
-        } catch(err){ showToast('Failed: '+err.message,'error'); }
+        } catch(err){ console.error('saveBudget error:', err); showFormError('budgetFormError','Failed: '+(err.message||String(err))); }
     });
 
     // Settings
@@ -1523,6 +1621,12 @@ function initEventListeners() {
 async function init() {
     initEventListeners();
 
+    window.addEventListener('unhandledrejection', e => {
+        const msg = e.reason?.message || String(e.reason);
+        console.error('Unhandled async error:', e.reason);
+        showToast('Unexpected error: ' + msg, 'error');
+    });
+
     // Hide user pill until logged in
     const pill=document.getElementById('userPill');
     if(pill) pill.style.display='none';
@@ -1532,6 +1636,8 @@ async function init() {
         showAuthScreen();
         return;
     }
+
+    checkDbConnection(); // non-blocking — updates #dbStatus banner
 
     // INITIAL_SESSION fires synchronously on subscribe with the current auth state.
     // SIGNED_IN fires when user logs in. TOKEN_REFRESHED fires on token refresh.

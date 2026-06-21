@@ -82,6 +82,10 @@
         <div class="auth-footer">
             🔒 Your data is private — username is your unique ID
         </div>
+
+        <div id="dbStatus" style="margin-top:12px;padding:8px 14px;border-radius:8px;font-size:12px;text-align:center;background:rgba(255,255,255,0.06);color:var(--text-muted)">
+            Checking database connection…
+        </div>
     </div>
 </div>
 
@@ -148,6 +152,10 @@
         <a href="#" class="nav-item" data-section="help">
             <span class="nav-icon">&#9432;</span>
             <span class="nav-label">Help & Guide</span>
+        </a>
+        <a href="#" class="nav-item" data-section="terms">
+            <span class="nav-icon">&#128221;</span>
+            <span class="nav-label">Terms of Use</span>
         </a>
     </nav>
 
@@ -535,6 +543,7 @@
                         </div>
                     </div>
                     <button class="btn btn-primary" id="saveCategoryBudget">Set Budget</button>
+                    <div id="budgetFormError" style="display:none;background:var(--expense-color,#f44);color:#fff;padding:8px 12px;border-radius:6px;font-size:13px;margin-top:8px"></div>
                 </div>
             </div>
         </div>
@@ -870,6 +879,101 @@
         </div><!-- end help-grid -->
     </section>
 
+    <!-- ══════════════ TERMS OF USE ══════════════ -->
+    <section class="content-section" id="section-terms">
+
+        <div class="help-banner">
+            <div class="help-banner-icon">📋</div>
+            <div class="help-banner-body">
+                <h2>Terms of Use</h2>
+                <p>Please read these terms before using FinTrack. By creating an account you agree to them.</p>
+            </div>
+        </div>
+
+        <div class="terms-meta">Last updated: June 2026 &nbsp;·&nbsp; Applies to: personal-tracker-nk.vercel.app</div>
+
+        <div class="terms-grid">
+
+            <div class="terms-card">
+                <h3>1. Who Can Use FinTrack</h3>
+                <p>FinTrack is a personal finance tool intended for individual use. You must be at least 13 years old to create an account. By using the app you confirm that the information you provide about yourself is accurate.</p>
+            </div>
+
+            <div class="terms-card">
+                <h3>2. Your Account</h3>
+                <ul>
+                    <li>Your account is identified by a username you choose. Keep it confidential.</li>
+                    <li>You are responsible for all activity that happens under your account.</li>
+                    <li>If you believe your account has been accessed by someone else, contact the administrator immediately.</li>
+                    <li>We reserve the right to suspend or delete accounts that violate these terms.</li>
+                </ul>
+            </div>
+
+            <div class="terms-card">
+                <h3>3. Your Data</h3>
+                <ul>
+                    <li>All financial data you enter (income, expenses, budgets, notes, comments) is stored in a cloud database and is visible to you when you log in.</li>
+                    <li>Data is associated with your account and is not shared with other users.</li>
+                    <li>We do not sell or commercially exploit your financial data.</li>
+                    <li>You can export or delete your data at any time from <strong>Settings &amp; Data</strong>.</li>
+                    <li>Fields such as notes and comments are stored as plain text with no additional encryption beyond database-level security.</li>
+                </ul>
+            </div>
+
+            <div class="terms-card">
+                <h3>4. Acceptable Use</h3>
+                <p>You agree to use FinTrack only for lawful personal finance tracking. You must not:</p>
+                <ul>
+                    <li>Attempt to access another user's account or data.</li>
+                    <li>Use the app to store information that is illegal, harmful, or fraudulent.</li>
+                    <li>Try to reverse-engineer, scrape, or interfere with the app or its infrastructure.</li>
+                    <li>Use automated scripts or bots to interact with the app.</li>
+                </ul>
+            </div>
+
+            <div class="terms-card">
+                <h3>5. No Financial Advice</h3>
+                <p>FinTrack is a tracking and visualisation tool only. Nothing in the app — including charts, summaries, budget indicators, or reports — constitutes financial, investment, tax, or legal advice. Always consult a qualified professional for financial decisions.</p>
+            </div>
+
+            <div class="terms-card">
+                <h3>6. Availability &amp; Changes</h3>
+                <ul>
+                    <li>FinTrack is provided on an <strong>"as is"</strong> basis. We do not guarantee uninterrupted or error-free service.</li>
+                    <li>We may update, change, or discontinue the app at any time without prior notice.</li>
+                    <li>We are not liable for any loss of data resulting from outages, bugs, or discontinuation.</li>
+                    <li>We strongly recommend exporting a JSON backup of your data regularly from <strong>Settings &amp; Data → Export JSON</strong>.</li>
+                </ul>
+            </div>
+
+            <div class="terms-card">
+                <h3>7. Limitation of Liability</h3>
+                <p>To the fullest extent permitted by law, the creators of FinTrack shall not be liable for any indirect, incidental, or consequential damages arising from your use of the app, including but not limited to loss of data, financial decisions made based on app output, or service interruptions.</p>
+            </div>
+
+            <div class="terms-card">
+                <h3>8. Intellectual Property</h3>
+                <p>The FinTrack application code, design, and content are the property of the developer. You may not copy, redistribute, or create derivative works without explicit written permission. Your own financial data remains yours.</p>
+            </div>
+
+            <div class="terms-card">
+                <h3>9. Changes to These Terms</h3>
+                <p>We may update these Terms of Use from time to time. Changes will be reflected on this page with an updated date. Continued use of the app after changes are posted constitutes acceptance of the revised terms.</p>
+            </div>
+
+            <div class="terms-card">
+                <h3>10. Contact</h3>
+                <p>For questions about these terms or to report a concern, contact the administrator through the GitHub repository or the contact details provided when you registered.</p>
+            </div>
+
+        </div>
+
+        <div class="terms-footer">
+            By using FinTrack you acknowledge that you have read, understood, and agree to these Terms of Use.
+        </div>
+
+    </section>
+
 </main>
 
 <!-- ══════════════ MODALS ══════════════ -->
@@ -918,6 +1022,7 @@
                 <label class="form-label">Additional Comments</label>
                 <textarea class="form-input form-textarea" id="expenseComments" placeholder="Optional notes..."></textarea>
             </div>
+            <div id="expenseFormError" style="display:none;background:var(--expense-color,#f44);color:#fff;padding:8px 12px;border-radius:6px;font-size:13px;margin-bottom:4px"></div>
             <div class="modal-actions">
                 <button type="button" class="btn btn-ghost" data-modal="expenseModal">Cancel</button>
                 <button type="submit" class="btn btn-primary">Save Expense</button>
@@ -964,6 +1069,7 @@
                 <label class="form-label">Notes</label>
                 <textarea class="form-input form-textarea" id="incomeNotes" placeholder="Optional notes..."></textarea>
             </div>
+            <div id="incomeFormError" style="display:none;background:var(--expense-color,#f44);color:#fff;padding:8px 12px;border-radius:6px;font-size:13px;margin-bottom:4px"></div>
             <div class="modal-actions">
                 <button type="button" class="btn btn-ghost" data-modal="incomeModal">Cancel</button>
                 <button type="submit" class="btn btn-success">Save Income</button>
