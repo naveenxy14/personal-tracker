@@ -66,24 +66,33 @@ async function onLogin(user) {
     let loadFailed = false;
     showLoader('Loading your data…');
     try {
-        await loadAllData(user.id, signal);
+        // Promise.race is the reliable timeout here: abortSignal alone doesn't work
+        // because Supabase CDN returns {data:null,error} instead of throwing, so a
+        // hanging fetch keeps the await pending even after abort() is called.
+        await Promise.race([
+            loadAllData(user.id, signal),
+            new Promise((_, reject) => setTimeout(() => {
+                _loadAbortController?.abort();
+                reject(new DOMException('Load timed out', 'AbortError'));
+            }, 12000))
+        ]);
     } catch(e) {
         loadFailed = true;
-        const isAbort = e.name === 'AbortError' || e.message?.includes('aborted');
+        const isTimeout = e.name === 'AbortError' || e.message?.includes('aborted') || e.message?.includes('timed out');
         console.error('onLogin load error:', e);
-        if (!isAbort) showToast('Error loading data: ' + (e.message || String(e)), 'error');
+        if (!isTimeout) showToast('Error loading data: ' + (e.message || String(e)), 'error');
     } finally {
         hideLoader();
         _loginInProgress = false;
     }
 
     // Always navigate — even on timeout/error, show the dashboard with whatever
-    // data loaded successfully rather than leaving the user on a blank screen.
+    // data loaded before the timeout.
     populateFMPickers();
     applyTheme(financeData.settings.theme || 'dark');
     navigate('dashboard');
     if (loadFailed) {
-        showToast('Some data may not have loaded — reload the page to retry', 'warning');
+        showToast('Loading timed out — some data may be missing. Reload to retry.', 'warning');
     }
 }
 
