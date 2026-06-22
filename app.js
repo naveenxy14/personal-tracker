@@ -49,45 +49,42 @@ async function onLogin(user) {
     updateUserUI(user);
     hideAuthScreen();
 
-    // Stagger simultaneous tab starts — if another tab just started loading
-    // (within 1.5s), wait 2s so queries don't all hit Supabase at once.
+    // Stagger simultaneous tab starts: if another tab wrote a timestamp within
+    // the last 3 seconds, wait out the remainder so both tabs don't hammer
+    // Supabase with 10 concurrent queries on a cold start.
     const lastStart = parseInt(localStorage.getItem('fintrack_tab_start') || '0');
-    if (Date.now() - lastStart < 1500) await new Promise(r => setTimeout(r, 2000));
+    const msSinceLast = Date.now() - lastStart;
+    if (msSinceLast > 0 && msSinceLast < 3000) {
+        await new Promise(r => setTimeout(r, 3000 - msSinceLast + 500));
+    }
     localStorage.setItem('fintrack_tab_start', Date.now().toString());
 
-    // Per-load AbortController: cancel all in-flight queries after 12s
     if (_loadAbortController) _loadAbortController.abort();
     _loadAbortController = new AbortController();
     const signal = _loadAbortController.signal;
 
+    let loadFailed = false;
     showLoader('Loading your data…');
     try {
         await loadAllData(user.id, signal);
     } catch(e) {
-        if (e.name === 'AbortError' || e.message?.includes('aborted') || e.message?.includes('timed out')) {
-            showLoaderError('Connection too slow — tap to retry', () => {
-                _loginInProgress = false;
-                onLogin(user);
-            });
-            return;
-        }
-        console.error('onLogin error:', e);
-        showToast('Error loading data: ' + (e.message || String(e)), 'error');
+        loadFailed = true;
+        const isAbort = e.name === 'AbortError' || e.message?.includes('aborted');
+        console.error('onLogin load error:', e);
+        if (!isAbort) showToast('Error loading data: ' + (e.message || String(e)), 'error');
     } finally {
         hideLoader();
         _loginInProgress = false;
     }
+
+    // Always navigate — even on timeout/error, show the dashboard with whatever
+    // data loaded successfully rather than leaving the user on a blank screen.
     populateFMPickers();
     applyTheme(financeData.settings.theme || 'dark');
     navigate('dashboard');
-}
-
-function showLoaderError(msg, onRetry) {
-    const ol = document.getElementById('loadingOverlay');
-    const lt = document.getElementById('loadingText');
-    if (lt) lt.innerHTML = `<span style="color:var(--expense-color,#ef4444)">${msg}</span>
-        <br><button class="btn btn-primary btn-sm" style="margin-top:12px" id="loaderRetryBtn">Retry</button>`;
-    document.getElementById('loaderRetryBtn')?.addEventListener('click', () => { hideLoader(); onRetry(); });
+    if (loadFailed) {
+        showToast('Some data may not have loaded — reload the page to retry', 'warning');
+    }
 }
 
 function usernameToEmail(username) {
