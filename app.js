@@ -13,12 +13,15 @@ let currentUser = null; // Logged-in auth.users record
 /* ============================================================
    IN-MEMORY STATE  (populated from Supabase on login)
    ============================================================ */
+const DEFAULT_PAYMENT_METHODS = ['Cash','UPI','Google Pay','PhonePe','Credit Card','Debit Card','Net Banking','Bank Transfer','UPI Lite'];
+
 let financeData = {
     metadata: { version: '1.0', createdDate: '', lastUpdated: '' },
-    settings:  { theme: 'dark', currency: 'INR', monthlyBudget: 50000, finMonthStartDay: 22 },
-    budgets:   [],
-    incomes:   [],
-    expenses:  []
+    settings:  { theme: 'dark', currency: 'INR', monthlyBudget: 50000, finMonthStartDay: 22, paymentMethods: [...DEFAULT_PAYMENT_METHODS] },
+    budgets:        [],
+    paymentBudgets: [],
+    incomes:        [],
+    expenses:       []
 };
 
 /* ============================================================
@@ -182,11 +185,12 @@ async function loadAllData(userId) {
             theme:             profile.theme            || 'dark',
             currency:          profile.currency         || 'INR',
             monthlyBudget:     profile.monthly_budget   || 50000,
-            finMonthStartDay:  profile.fin_month_start_day || 22
+            finMonthStartDay:  profile.fin_month_start_day || 22,
+            paymentMethods:    Array.isArray(profile.payment_methods) ? profile.payment_methods : [...DEFAULT_PAYMENT_METHODS]
         };
     } else if (!profileErr) {
         // No profile yet — create one (first login)
-        const { error: pInsErr } = await sb.from('profiles').insert({ id: userId });
+        const { error: pInsErr } = await sb.from('profiles').insert({ id: userId, payment_methods: DEFAULT_PAYMENT_METHODS });
         if (pInsErr) console.warn('profile insert error:', pInsErr);
     }
 
@@ -205,11 +209,18 @@ async function loadAllData(userId) {
     if (budErr) console.warn('budgets query error:', budErr);
     financeData.budgets = (budgets || []).map(r => ({ id: r.id, category: r.category, amount: r.amount }));
 
+    // Payment budgets
+    const { data: paymentBudgets, error: pbErr } = await sb.from('payment_budgets').select('*').eq('user_id', userId);
+    if (pbErr) console.warn('payment_budgets query error:', pbErr);
+    financeData.paymentBudgets = (paymentBudgets || []).map(r => ({ id: r.id, method: r.method, amount: parseFloat(r.amount) }));
+
     financeData.metadata.lastUpdated = new Date().toISOString();
 
-    // Seed sample data only if every query succeeded with 0 rows (truly new user)
+    // Seed sample data only for truly new users (check localStorage + DB flag)
+    const seedKey = `fintrack_seeded_${userId}`;
+    const alreadySeeded = localStorage.getItem(seedKey) || profile?.has_seeded;
     const anyQueryFailed = incErr || expErr || budErr;
-    if (!anyQueryFailed && financeData.incomes.length === 0 && financeData.expenses.length === 0) {
+    if (!anyQueryFailed && !alreadySeeded && financeData.incomes.length === 0 && financeData.expenses.length === 0) {
         showLoader('Setting up sample data for you…');
         await generateSampleDataForUser(userId);
     }
@@ -219,7 +230,7 @@ function dbToIncome(r) {
     return { id: r.id, amount: parseFloat(r.amount), date: r.date, source: r.source, category: r.category, notes: r.notes || '' };
 }
 function dbToExpense(r) {
-    return { id: r.id, amount: parseFloat(r.amount), date: r.date, time: r.time || '', category: r.category, description: r.description, comments: r.comments || '' };
+    return { id: r.id, amount: parseFloat(r.amount), date: r.date, time: r.time || '', category: r.category, description: r.description, comments: r.comments || '', paid_using: r.paid_using || 'Cash' };
 }
 
 async function syncProfile() {
@@ -230,6 +241,7 @@ async function syncProfile() {
         currency:             financeData.settings.currency,
         monthly_budget:       financeData.settings.monthlyBudget,
         fin_month_start_day:  financeData.settings.finMonthStartDay,
+        payment_methods:      financeData.settings.paymentMethods,
         updated_at:           new Date().toISOString()
     });
 }
@@ -313,7 +325,8 @@ async function dbInsertExpense(rec) {
         time:        rec.time,
         category:    rec.category,
         description: rec.description,
-        comments:    rec.comments
+        comments:    rec.comments,
+        paid_using:  rec.paid_using || 'Cash'
     }).select().single();
     if (error) throw dbErr(error);
     if (!data) throw new Error('No data returned — check RLS policies');
@@ -324,7 +337,8 @@ async function dbUpdateExpense(id, rec) {
     if (!currentUser) throw new Error('Not signed in');
     const { error } = await sb.from('expenses').update({
         amount: rec.amount, date: rec.date, time: rec.time,
-        category: rec.category, description: rec.description, comments: rec.comments
+        category: rec.category, description: rec.description, comments: rec.comments,
+        paid_using: rec.paid_using || 'Cash'
     }).eq('id', id).eq('user_id', currentUser.id);
     if (error) throw dbErr(error);
 }
@@ -352,6 +366,23 @@ async function dbDeleteBudget(id) {
     if (error) throw dbErr(error);
 }
 
+async function dbUpsertPaymentBudget(method, amount) {
+    if (!currentUser) throw new Error('Not signed in');
+    const { data, error } = await sb.from('payment_budgets').upsert(
+        { user_id: currentUser.id, method, amount },
+        { onConflict: 'user_id,method' }
+    ).select().single();
+    if (error) throw dbErr(error);
+    if (!data) throw new Error('No data returned — check RLS policies');
+    return data.id;
+}
+
+async function dbDeletePaymentBudget(id) {
+    if (!currentUser) throw new Error('Not signed in');
+    const { error } = await sb.from('payment_budgets').delete().eq('id', id).eq('user_id', currentUser.id);
+    if (error) throw dbErr(error);
+}
+
 /* ============================================================
    SAMPLE DATA (inserted to Supabase on first login)
    ============================================================ */
@@ -375,15 +406,17 @@ async function generateSampleDataForUser(userId) {
     const expDescs = { Food:['Swiggy Order','Zomato Dinner','Grocery Shopping','McDonald\'s'], Shopping:['Amazon Purchase','Myntra Clothes','Flipkart Order'], Travel:['Ola/Uber Cab','IRCTC Train','Auto Rickshaw'], Fuel:['Petrol Refill','CNG Fill'], Rent:['Monthly House Rent'], EMI:['Car EMI','Home Loan EMI'], Utilities:['Electricity Bill','WiFi Bill','Mobile Recharge'], Entertainment:['Netflix','Movie Tickets','BookMyShow'], Medical:['Pharmacy','Doctor Visit'], Subscription:['Spotify','iCloud'] };
     const expCats  = ['Food','Shopping','Travel','Fuel','Utilities','Entertainment','Medical','Subscription'];
     const amtMap   = { Food:[200,1800], Shopping:[500,5000], Travel:[150,3000], Fuel:[500,2000], Utilities:[200,2000], Entertainment:[200,1500], Medical:[300,3000], Subscription:[99,999] };
+    const pmMethods = ['Cash','UPI','Google Pay','PhonePe','Credit Card','Debit Card','Bank Transfer'];
+    const rPM = () => pmMethods[rnd(0, pmMethods.length-1)];
 
     for (let m = 0; m < 6; m++) {
-        expenseRows.push({ user_id: userId, amount: rnd(15000,18000), date: rDate(m), time: '09:00', category: 'Rent', description: 'Monthly House Rent', comments: '' });
-        expenseRows.push({ user_id: userId, amount: rnd(8000,12000),  date: rDate(m), time: '10:00', category: 'EMI',  description: 'Car EMI', comments: '' });
+        expenseRows.push({ user_id: userId, amount: rnd(15000,18000), date: rDate(m), time: '09:00', category: 'Rent', description: 'Monthly House Rent', comments: '', paid_using: 'Bank Transfer' });
+        expenseRows.push({ user_id: userId, amount: rnd(8000,12000),  date: rDate(m), time: '10:00', category: 'EMI',  description: 'Car EMI', comments: '', paid_using: 'Bank Transfer' });
         for (let i = 0; i < 8; i++) {
             const cat  = expCats[rnd(0, expCats.length-1)];
             const desc = expDescs[cat][rnd(0, expDescs[cat].length-1)];
             const [mn, mx] = amtMap[cat] || [100,1000];
-            expenseRows.push({ user_id: userId, amount: rnd(mn,mx), date: rDate(m), time: rTime(), category: cat, description: desc, comments: '' });
+            expenseRows.push({ user_id: userId, amount: rnd(mn,mx), date: rDate(m), time: rTime(), category: cat, description: desc, comments: '', paid_using: rPM() });
         }
     }
 
@@ -403,6 +436,10 @@ async function generateSampleDataForUser(userId) {
     if (expErr) throw dbErr(expErr);
     const { error: budErr } = await sb.from('budgets').insert(budgetRows);
     if (budErr) throw dbErr(budErr);
+
+    // Mark seeded so we don't loop on next login
+    localStorage.setItem(`fintrack_seeded_${userId}`, '1');
+    await sb.from('profiles').update({ has_seeded: true }).eq('id', userId);
 
     // Reload fresh from DB so IDs are correct
     const { data: inc } = await sb.from('incomes').select('*').eq('user_id', userId).order('date', { ascending: false });
@@ -692,10 +729,10 @@ function renderIncomeTable() {
     }
     tbody.innerHTML = page.map(r=>`<tr>
         <td>${fmtDate(r.date)}</td>
-        <td>${r.source||'—'}</td>
+        <td>${r.source||'—'}${r.category==='Opening Balance'&&r.notes?` <span class="pm-badge">${r.notes}</span>`:''}</td>
         <td><span class="cat-badge ${catClass(r.category)}">${catIcon(r.category)} ${r.category}</span></td>
         <td class="amount-income">${fmt(r.amount)}</td>
-        <td>${r.notes||'—'}</td>
+        <td>${r.category==='Opening Balance'?'—':r.notes||'—'}</td>
         <td>
             <button class="action-btn edit-btn" onclick="openEditIncome(${r.id})">Edit</button>
             <button class="action-btn delete-btn" onclick="confirmDelete('income',${r.id})">Delete</button>
@@ -716,7 +753,7 @@ function renderExpenseTable() {
     const tbody    = document.getElementById('expenseTableBody');
     if (!tbody) return;
     if (!page.length) {
-        tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">💸</div><div class="empty-title">No expense records</div></div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">💸</div><div class="empty-title">No expense records</div></div></td></tr>`;
         renderPagination('expensePagination', 0, state, renderExpenseTable);
         return;
     }
@@ -726,6 +763,7 @@ function renderExpenseTable() {
         <td><span class="cat-badge ${catClass(r.category)}">${catIcon(r.category)} ${r.category}</span></td>
         <td>${r.description||'—'}</td>
         <td class="amount-expense">${fmt(r.amount)}</td>
+        <td><span class="pm-badge">${r.paid_using||'Cash'}</span></td>
         <td>${r.comments||'—'}</td>
         <td>
             <button class="action-btn edit-btn" onclick="openEditExpense(${r.id})">Edit</button>
@@ -757,7 +795,7 @@ function renderTransactionTable() {
     const tbody = document.getElementById('txTableBody');
     if (!tbody) return;
     if (!page.length) {
-        tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">No transactions</div></div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">No transactions</div></div></td></tr>`;
         renderPagination('txPagination',0,state,renderTransactionTable);
         return;
     }
@@ -768,6 +806,7 @@ function renderTransactionTable() {
         <td><span class="cat-badge ${catClass(r.category)}">${catIcon(r.category)} ${r.category}</span></td>
         <td>${r.source||r.description||'—'}</td>
         <td class="${r.type==='income'?'amount-income':'amount-expense'}">${r.type==='income'?'+':'-'}${fmt(r.amount)}</td>
+        <td>${r.type==='expense'?`<span class="pm-badge">${r.paid_using||'Cash'}</span>`:'—'}</td>
         <td>${r.notes||r.comments||'—'}</td>
         <td>
             <button class="action-btn edit-btn" onclick="${r.type==='income'?'openEditIncome':'openEditExpense'}(${r.id})">Edit</button>
@@ -852,6 +891,7 @@ function renderDashboard() {
 
     renderRecentTransactions();
     renderBudgetOverviewWidget();
+    renderPaymentMethodWidget();
     renderDashPieChart();
     renderDashTrendChart();
 }
@@ -927,6 +967,31 @@ function renderDashTrendChart() {
 function getChartTextColor() { return financeData.settings.theme==='dark' ? '#9e9eb8' : '#4a4a6a'; }
 function getChartGridColor() { return financeData.settings.theme==='dark' ? '#2e3250' : '#d1d5e8'; }
 
+function renderPaymentMethodWidget() {
+    const container = document.getElementById('paymentMethodWidget');
+    const label = document.getElementById('pmWidgetMonthLabel');
+    if (!container) return;
+    const fm = dashActiveFM || currentFinancialMonth();
+    if (label) label.textContent = finMonthName(fm.month, fm.year);
+    const fmExp = financeData.expenses.filter(r => isInFinancialMonth(r.date, fm.month, fm.year));
+    const pmSpend = {};
+    fmExp.forEach(r => { const m = r.paid_using || 'Cash'; pmSpend[m] = (pmSpend[m] || 0) + r.amount; });
+    const sorted = Object.entries(pmSpend).sort((a, b) => b[1] - a[1]);
+    const total = sorted.reduce((s, [, v]) => s + v, 0);
+    if (!sorted.length) {
+        container.innerHTML = '<div class="empty-state"><div class="empty-icon">💳</div><div class="empty-title">No expenses this month</div></div>';
+        return;
+    }
+    container.innerHTML = sorted.map(([method, amount]) => {
+        const pct = total > 0 ? (amount / total * 100).toFixed(1) : 0;
+        return `<div class="pm-widget-row">
+            <div class="pm-widget-left"><span class="pm-badge">${method}</span></div>
+            <div class="pm-widget-bar-wrap"><div class="pm-widget-bar" style="width:${pct}%"></div></div>
+            <div class="pm-widget-right"><span class="amount-expense">${fmt(amount)}</span><span class="pm-pct">${pct}%</span></div>
+        </div>`;
+    }).join('');
+}
+
 /* ============================================================
    ANALYTICS
    ============================================================ */
@@ -963,6 +1028,34 @@ function renderAnalytics() {
     if(budgetChart) budgetChart.destroy();
     const bca=document.getElementById('budgetChart');
     if(bca && financeData.budgets.length) budgetChart=new Chart(bca,{type:'bar',data:{labels:financeData.budgets.map(b=>b.category),datasets:[{label:'Budget',data:financeData.budgets.map(b=>b.amount),backgroundColor:'rgba(124,111,224,0.4)',borderColor:'#7c6fe0',borderWidth:1,borderRadius:4},{label:'Actual',data:financeData.budgets.map(b=>catSpend[b.category]||0),backgroundColor:'rgba(239,68,68,0.5)',borderColor:'#ef4444',borderWidth:1,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:getChartTextColor(),font:{size:11}}},tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${fmt(c.raw)}`}}},scales:{x:{grid:{color:getChartGridColor()},ticks:{color:getChartTextColor(),font:{size:10}}},y:{grid:{color:getChartGridColor()},ticks:{color:getChartTextColor(),font:{size:10},callback:v=>fmt(v)}}}}});
+
+    // Payment method charts
+    renderPaymentCharts(expenses);
+}
+
+/* ============================================================
+   ANALYTICS — PAYMENT METHOD CHARTS
+   ============================================================ */
+let paymentPieChart = null, paymentBarChart = null;
+
+function renderPaymentCharts(expenses) {
+    const pmSpend = {};
+    expenses.forEach(r => { const m = r.paid_using || 'Cash'; pmSpend[m] = (pmSpend[m] || 0) + r.amount; });
+    const sorted = Object.entries(pmSpend).sort((a, b) => b[1] - a[1]);
+    const total  = sorted.reduce((s, [, v]) => s + v, 0);
+    const colors = ['#7c6fe0','#22c55e','#ef4444','#f59e0b','#3b82f6','#ec4899','#14b8a6','#f97316','#8b5cf6','#06b6d4','#a855f7','#10b981'];
+
+    if (paymentPieChart) paymentPieChart.destroy();
+    const ppc = document.getElementById('paymentPieChart');
+    if (ppc && sorted.length) {
+        paymentPieChart = new Chart(ppc, { type:'doughnut', data:{ labels:sorted.map(e=>e[0]), datasets:[{ data:sorted.map(e=>e[1]), backgroundColor:colors, borderWidth:2, borderColor:getComputedStyle(document.documentElement).getPropertyValue('--bg-card') }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'right', labels:{ color:getChartTextColor(), font:{ size:11 }, padding:10 } }, tooltip:{ callbacks:{ label:c=>` ${c.label}: ${fmt(c.raw)} (${(c.raw/total*100).toFixed(1)}%)` } } } } });
+    }
+
+    if (paymentBarChart) paymentBarChart.destroy();
+    const pbc = document.getElementById('paymentBarChart');
+    if (pbc && sorted.length) {
+        paymentBarChart = new Chart(pbc, { type:'bar', data:{ labels:sorted.map(e=>e[0]), datasets:[{ label:'Amount', data:sorted.map(e=>e[1]), backgroundColor:colors, borderRadius:6 }] }, options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false }, tooltip:{ callbacks:{ label:c=>` ${fmt(c.raw)}` } } }, scales:{ x:{ grid:{ color:getChartGridColor() }, ticks:{ color:getChartTextColor(), font:{ size:10 }, callback:v=>fmt(v) } }, y:{ grid:{ color:'transparent' }, ticks:{ color:getChartTextColor(), font:{ size:11 } } } } } });
+    }
 }
 
 /* ============================================================
@@ -987,6 +1080,7 @@ function generateReport() {
     if (!container) return;
     if (type==='finMonth')  renderFinMonthReport(container);
     else if (type==='yearly') renderYearlyReport(container,year);
+    else if (type==='payment') renderPaymentMethodReport(container);
     else renderCategoryReport(container);
 }
 
@@ -1043,6 +1137,17 @@ function renderCategoryReport(container) {
     <tbody>${rows.map(r=>`<tr><td><span class="cat-badge ${catClass(r.cat)}">${catIcon(r.cat)} ${r.cat}</span></td><td class="amount-expense">${fmt(r.total)}</td><td>${r.count}</td><td>${fmt(r.avg.toFixed(0))}</td><td>${grand>0?(r.total/grand*100).toFixed(1):0}%</td></tr>`).join('')}</tbody></table></div>`;
 }
 
+function renderPaymentMethodReport(container) {
+    const pmSpend={}, pmCount={};
+    financeData.expenses.forEach(r=>{ const m=r.paid_using||'Cash'; pmSpend[m]=(pmSpend[m]||0)+r.amount; pmCount[m]=(pmCount[m]||0)+1; });
+    const rows=Object.entries(pmSpend).sort((a,b)=>b[1]-a[1]).map(([m,total])=>({m,total,count:pmCount[m],avg:total/pmCount[m]}));
+    const grand=rows.reduce((s,r)=>s+r.total,0);
+    if (!rows.length) { container.innerHTML='<div class="card"><div style="padding:32px;text-align:center;color:var(--text-muted)">No expenses found.</div></div>'; return; }
+    container.innerHTML=`<div class="card"><div class="card-header"><h3>Payment Method Report</h3><span class="card-badge">All Time</span></div>
+    <table class="data-table"><thead><tr><th>Payment Method</th><th>Total Spent</th><th>Transactions</th><th>Avg Transaction</th><th>% of Total</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr><td><span class="pm-badge">${r.m}</span></td><td class="amount-expense">${fmt(r.total)}</td><td>${r.count}</td><td>${fmt(r.avg.toFixed(0))}</td><td>${grand>0?(r.total/grand*100).toFixed(1):0}%</td></tr>`).join('')}</tbody></table></div>`;
+}
+
 /* ============================================================
    BUDGET PAGE
    ============================================================ */
@@ -1063,21 +1168,67 @@ function renderBudgetPage() {
         statusCard.innerHTML=`<div style="display:flex;justify-content:space-between;margin-bottom:8px"><span>Spent: <strong class="amount-expense">${fmt(totalFmExp)}</strong></span><span>Budget: <strong>${fmt(monthBudget)}</strong></span></div><div class="progress-bar" style="height:10px;border-radius:5px"><div class="progress-fill ${cls}" style="width:${Math.min(pct,100)}%"></div></div><div style="margin-top:8px;font-size:12px;color:var(--text-muted)">${pct}% used • ${monthBudget-totalFmExp>=0?fmt(monthBudget-totalFmExp)+' remaining':fmt(Math.abs(monthBudget-totalFmExp))+' over budget'}</div>`;
     }
     const container=document.getElementById('budgetProgressList');
+    if (container) {
+        if (!financeData.budgets.length) {
+            container.innerHTML='<div class="empty-state"><div class="empty-icon">🎯</div><div class="empty-title">No category budgets</div></div>';
+        } else {
+            container.innerHTML=financeData.budgets.map(b=>{
+                const spent=catSpend[b.category]||0, pct=b.amount>0?Math.min((spent/b.amount)*100,100):0;
+                const over=spent-b.amount, cls=pct>=100?'progress-critical':pct>=90?'progress-critical':pct>=75?'progress-warning':'progress-safe';
+                const pctCol=pct>=100?'var(--expense-color)':pct>=75?'var(--warning-color)':'var(--income-color)';
+                let badge='';
+                if(pct>=100) badge=`<span class="budget-warning-badge warning-100">⚠ Over Budget by ${fmt(over)}</span>`;
+                else if(pct>=90) badge=`<span class="budget-warning-badge warning-90">⚡ Critical — ${(100-pct).toFixed(0)}% left</span>`;
+                else if(pct>=75) badge=`<span class="budget-warning-badge warning-75">⚠ Warning — ${(100-pct).toFixed(0)}% left</span>`;
+                return `<div class="budget-progress-item">
+                    <div class="budget-progress-header">
+                        <div><div class="budget-progress-name">${catIcon(b.category)} ${b.category}</div><div class="budget-progress-amounts">${fmt(spent)} of ${fmt(b.amount)}</div></div>
+                        <div style="text-align:right"><div class="budget-progress-pct" style="color:${pctCol}">${pct.toFixed(1)}%</div>
+                        <button class="action-btn delete-btn" style="font-size:11px;margin-top:4px" onclick="removeBudget(${b.id})">Remove</button></div>
+                    </div>
+                    <div class="budget-progress-bar"><div class="progress-fill ${cls}" style="width:${pct}%"></div></div>${badge}
+                </div>`;
+            }).join('');
+        }
+    }
+
+    // Payment method budget section
+    renderPaymentBudgetSection(fm, fmExp);
+}
+
+function renderPaymentBudgetSection(fm, fmExpenses) {
+    setText('pmBudgetMonthLabel', finMonthName(fm.month, fm.year));
+
+    // Populate method select
+    const methodSel = document.getElementById('paymentBudgetMethodSelect');
+    if (methodSel) {
+        const prev = methodSel.value;
+        const methods = financeData.settings.paymentMethods || DEFAULT_PAYMENT_METHODS;
+        methodSel.innerHTML = '<option value="">Select Method</option>' +
+            methods.map(m => `<option value="${m}"${m===prev?' selected':''}>${m}</option>`).join('');
+    }
+
+    // Render progress
+    const container = document.getElementById('paymentBudgetProgressList');
     if (!container) return;
-    if (!financeData.budgets.length) { container.innerHTML='<div class="empty-state"><div class="empty-icon">🎯</div><div class="empty-title">No category budgets</div></div>'; return; }
-    container.innerHTML=financeData.budgets.map(b=>{
-        const spent=catSpend[b.category]||0, pct=b.amount>0?Math.min((spent/b.amount)*100,100):0;
-        const over=spent-b.amount, cls=pct>=100?'progress-critical':pct>=90?'progress-critical':pct>=75?'progress-warning':'progress-safe';
+    const pmSpend = {};
+    fmExpenses.forEach(r => { const m = r.paid_using||'Cash'; pmSpend[m]=(pmSpend[m]||0)+r.amount; });
+    if (!financeData.paymentBudgets.length) {
+        container.innerHTML = '<div class="empty-state"><div class="empty-icon">💳</div><div class="empty-title">No payment method budgets set</div></div>';
+        return;
+    }
+    container.innerHTML = financeData.paymentBudgets.map(b => {
+        const spent=pmSpend[b.method]||0, pct=b.amount>0?Math.min((spent/b.amount)*100,100):0;
+        const over=spent-b.amount, cls=pct>=100?'progress-critical':pct>=75?'progress-warning':'progress-safe';
         const pctCol=pct>=100?'var(--expense-color)':pct>=75?'var(--warning-color)':'var(--income-color)';
         let badge='';
-        if(pct>=100) badge=`<span class="budget-warning-badge warning-100">⚠ Over Budget by ${fmt(over)}</span>`;
-        else if(pct>=90) badge=`<span class="budget-warning-badge warning-90">⚡ Critical — ${(100-pct).toFixed(0)}% left</span>`;
-        else if(pct>=75) badge=`<span class="budget-warning-badge warning-75">⚠ Warning — ${(100-pct).toFixed(0)}% left</span>`;
+        if(pct>=100) badge=`<span class="budget-warning-badge warning-100">⚠ Over by ${fmt(over)}</span>`;
+        else if(pct>=75) badge=`<span class="budget-warning-badge warning-75">⚠ ${(100-pct).toFixed(0)}% left</span>`;
         return `<div class="budget-progress-item">
             <div class="budget-progress-header">
-                <div><div class="budget-progress-name">${catIcon(b.category)} ${b.category}</div><div class="budget-progress-amounts">${fmt(spent)} of ${fmt(b.amount)}</div></div>
+                <div><div class="budget-progress-name">💳 ${b.method}</div><div class="budget-progress-amounts">${fmt(spent)} of ${fmt(b.amount)}</div></div>
                 <div style="text-align:right"><div class="budget-progress-pct" style="color:${pctCol}">${pct.toFixed(1)}%</div>
-                <button class="action-btn delete-btn" style="font-size:11px;margin-top:4px" onclick="removeBudget(${b.id})">Remove</button></div>
+                <button class="action-btn delete-btn" style="font-size:11px;margin-top:4px" onclick="removePaymentBudget(${b.id})">Remove</button></div>
             </div>
             <div class="budget-progress-bar"><div class="progress-fill ${cls}" style="width:${pct}%"></div></div>${badge}
         </div>`;
@@ -1093,6 +1244,15 @@ async function removeBudget(id) {
     } catch(e) { console.error('removeBudget error:', e); showToast('Failed to remove budget: '+(e.message||String(e)),'error'); }
 }
 
+async function removePaymentBudget(id) {
+    try {
+        await dbDeletePaymentBudget(id);
+        financeData.paymentBudgets = financeData.paymentBudgets.filter(b=>b.id!==id);
+        renderBudgetPage();
+        showToast('Budget removed','success');
+    } catch(e) { console.error('removePaymentBudget error:', e); showToast('Failed to remove: '+(e.message||String(e)),'error'); }
+}
+
 /* ============================================================
    SETTINGS PAGE
    ============================================================ */
@@ -1104,6 +1264,26 @@ function renderSettingsPage() {
     if (ts) ts.value = financeData.settings.theme||'dark';
     if (sd) sd.value = financeData.settings.finMonthStartDay||22;
     updateFMPreview();
+    renderPaymentMethodsSettings();
+}
+
+function renderPaymentMethodsSettings() {
+    const list = document.getElementById('paymentMethodsList');
+    if (!list) return;
+    const methods = financeData.settings.paymentMethods || DEFAULT_PAYMENT_METHODS;
+    list.innerHTML = methods.map(m => `
+        <div class="setting-item">
+            <span class="pm-badge">${m}</span>
+            <button class="action-btn delete-btn" style="font-size:11px" onclick="removePaymentMethod('${m.replace(/'/g,"\\'")}')">Remove</button>
+        </div>`).join('');
+}
+
+async function removePaymentMethod(method) {
+    financeData.settings.paymentMethods = (financeData.settings.paymentMethods || []).filter(m => m !== method);
+    await syncProfile();
+    renderPaymentMethodsSettings();
+    renderPaymentBudgetSection(dashActiveFM || currentFinancialMonth(), financeData.expenses.filter(r => isInFinancialMonth(r.date, (dashActiveFM||currentFinancialMonth()).month, (dashActiveFM||currentFinancialMonth()).year)));
+    showToast('Payment method removed','success');
 }
 
 function updateFMPreview() {
@@ -1125,6 +1305,93 @@ function populateFMPickers() {
         months.forEach(fm=>{ const o=document.createElement('option'); o.value=`${fm.year}-${fm.month}`; o.textContent=`${finMonthName(fm.month,fm.year)} (${finMonthRangeLabel(fm.month,fm.year)})`; sel.appendChild(o); });
         if(prev) sel.value=prev;
     });
+}
+
+/* ============================================================
+   OPENING BALANCE
+   ============================================================ */
+function getFMStartDate(fmMonth, fmYear) {
+    const startDay = financeData.settings.finMonthStartDay || 22;
+    // FM "July 2026" (month=6) starts on June 22 2026 → prev calendar month
+    const calMonth = fmMonth === 0 ? 11 : fmMonth - 1;
+    const calYear  = fmMonth === 0 ? fmYear - 1 : fmYear;
+    return `${calYear}-${String(calMonth + 1).padStart(2,'0')}-${String(startDay).padStart(2,'0')}`;
+}
+
+function openOpeningBalanceModal() {
+    const fm    = dashActiveFM || currentFinancialMonth();
+    const label = document.getElementById('obMonthLabel');
+    if (label) label.textContent = `${finMonthName(fm.month, fm.year)} FM`;
+
+    const list    = document.getElementById('obMethodsList');
+    const methods = financeData.settings.paymentMethods || DEFAULT_PAYMENT_METHODS;
+    if (list) {
+        list.innerHTML = methods.map(m => `
+            <div style="display:flex;align-items:center;gap:12px">
+                <span class="pm-badge" style="min-width:110px;text-align:center">${m}</span>
+                <input type="number" class="form-input ob-amount-input" data-method="${m}"
+                    placeholder="0.00" step="0.01" min="0" style="flex:1" />
+            </div>`).join('');
+
+        // Pre-fill existing opening balance entries for this FM
+        const existing = financeData.incomes.filter(r =>
+            r.category === 'Opening Balance' && isInFinancialMonth(r.date, fm.month, fm.year));
+        existing.forEach(r => {
+            const inp = list.querySelector(`[data-method="${r.notes}"]`);
+            if (inp) inp.value = r.amount;
+        });
+    }
+
+    showFormError('obFormError', '');
+    openModal('openingBalanceModal');
+}
+
+async function saveOpeningBalance() {
+    showFormError('obFormError', '');
+    if (!currentUser) { showFormError('obFormError', 'Not signed in — please refresh.'); return; }
+
+    const fm      = dashActiveFM || currentFinancialMonth();
+    const fmStart = getFMStartDate(fm.month, fm.year);
+    const inputs  = document.querySelectorAll('.ob-amount-input');
+
+    const entries = [];
+    inputs.forEach(inp => {
+        const amount = parseFloat(inp.value);
+        if (amount > 0) entries.push({ amount, method: inp.dataset.method });
+    });
+    if (!entries.length) { showFormError('obFormError', 'Enter at least one balance amount'); return; }
+
+    const btn = document.getElementById('saveOpeningBalanceBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+        // Remove existing opening balance entries for this FM
+        const existing = financeData.incomes.filter(r =>
+            r.category === 'Opening Balance' && isInFinancialMonth(r.date, fm.month, fm.year));
+        for (const r of existing) await dbDeleteIncome(r.id);
+        financeData.incomes = financeData.incomes.filter(r =>
+            !(r.category === 'Opening Balance' && isInFinancialMonth(r.date, fm.month, fm.year)));
+
+        // Insert new entries (one per payment method)
+        for (const { amount, method } of entries) {
+            const newId = await dbInsertIncome({
+                amount, date: fmStart,
+                source:   'Opening Balance',
+                category: 'Opening Balance',
+                notes:    method
+            });
+            financeData.incomes.unshift({ id: newId, amount, date: fmStart, source: 'Opening Balance', category: 'Opening Balance', notes: method });
+        }
+
+        closeModal('openingBalanceModal');
+        renderIncomeTable();
+        renderDashboard();
+        showToast(`Opening balance saved for ${finMonthName(fm.month, fm.year)} FM`, 'success');
+    } catch(err) {
+        console.error('saveOpeningBalance error:', err);
+        showFormError('obFormError', 'Save failed: ' + (err.message || String(err)));
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Save Opening Balance'; }
+    }
 }
 
 /* ============================================================
@@ -1202,12 +1469,20 @@ async function saveIncome(e) {
 /* ============================================================
    EXPENSE CRUD
    ============================================================ */
+function populatePaidUsingSelect(selectedValue) {
+    const sel = document.getElementById('expensePaidUsing');
+    if (!sel) return;
+    const methods = financeData.settings.paymentMethods || DEFAULT_PAYMENT_METHODS;
+    sel.innerHTML = methods.map(m => `<option value="${m}"${m===selectedValue?' selected':''}>${m}</option>`).join('');
+}
+
 function openAddExpense() {
     document.getElementById('expenseEditId').value='';
     document.getElementById('expenseModalTitle').textContent='Add Expense';
     document.getElementById('expenseForm').reset();
     document.getElementById('expenseDate').value=new Date().toISOString().split('T')[0];
     document.getElementById('expenseTime').value=new Date().toTimeString().slice(0,5);
+    populatePaidUsingSelect('Cash');
     showFormError('expenseFormError', '');
     openModal('expenseModal');
 }
@@ -1222,6 +1497,7 @@ function openEditExpense(id) {
     document.getElementById('expenseCategory').value=rec.category;
     document.getElementById('expenseDescription').value=rec.description;
     document.getElementById('expenseComments').value=rec.comments||'';
+    populatePaidUsingSelect(rec.paid_using||'Cash');
     showFormError('expenseFormError', '');
     openModal('expenseModal');
 }
@@ -1237,6 +1513,7 @@ async function saveExpense(e) {
     const category    = document.getElementById('expenseCategory').value;
     const description = document.getElementById('expenseDescription').value.trim();
     const comments    = document.getElementById('expenseComments').value.trim();
+    const paid_using  = document.getElementById('expensePaidUsing').value || 'Cash';
 
     if (!amount||amount<=0)  { showFormError('expenseFormError','Amount must be greater than 0'); return; }
     if (!date)               { showFormError('expenseFormError','Date is required'); return; }
@@ -1246,13 +1523,13 @@ async function saveExpense(e) {
     const editId = parseInt(document.getElementById('expenseEditId').value);
     try {
         if (editId) {
-            await dbUpdateExpense(editId, { amount, date, time, category, description, comments });
+            await dbUpdateExpense(editId, { amount, date, time, category, description, comments, paid_using });
             const idx=financeData.expenses.findIndex(r=>r.id===editId);
-            if (idx>=0) financeData.expenses[idx]={...financeData.expenses[idx],amount,date,time,category,description,comments};
+            if (idx>=0) financeData.expenses[idx]={...financeData.expenses[idx],amount,date,time,category,description,comments,paid_using};
             showToast('Expense updated','success');
         } else {
-            const newId = await dbInsertExpense({ amount, date, time, category, description, comments });
-            financeData.expenses.unshift({ id:newId, amount, date, time, category, description, comments });
+            const newId = await dbInsertExpense({ amount, date, time, category, description, comments, paid_using });
+            financeData.expenses.unshift({ id:newId, amount, date, time, category, description, comments, paid_using });
             showToast('Expense added','success');
         }
     } catch(err) {
@@ -1320,7 +1597,7 @@ function showToast(message, type='info') {
 function getAllTransactionsForExport() {
     return [
         ...financeData.incomes.map(r=>({Date:r.date,Time:'',Type:'Income',Category:r.category,Description:r.source,Amount:r.amount,Notes:r.notes||''})),
-        ...financeData.expenses.map(r=>({Date:r.date,Time:r.time||'',Type:'Expense',Category:r.category,Description:r.description,Amount:-r.amount,Notes:r.comments||''}))
+        ...financeData.expenses.map(r=>({Date:r.date,Time:r.time||'',Type:'Expense',Category:r.category,Description:r.description,Amount:-r.amount,'Paid Using':r.paid_using||'Cash',Notes:r.comments||''}))
     ].sort((a,b)=>new Date(b.Date)-new Date(a.Date));
 }
 
@@ -1500,6 +1777,8 @@ function initEventListeners() {
 
     // Income
     document.getElementById('addIncomeBtn')?.addEventListener('click',openAddIncome);
+    document.getElementById('openingBalanceBtn')?.addEventListener('click',openOpeningBalanceModal);
+    document.getElementById('saveOpeningBalanceBtn')?.addEventListener('click',saveOpeningBalance);
     document.getElementById('incomeForm')?.addEventListener('submit',saveIncome);
     document.getElementById('incomeSearch')?.addEventListener('input',()=>{ paginationState.income.page=1; renderIncomeTable(); });
     document.getElementById('incomeCategoryFilter')?.addEventListener('change',()=>{ paginationState.income.page=1; renderIncomeTable(); });
@@ -1569,6 +1848,39 @@ function initEventListeners() {
             renderBudgetPage();
             showToast(`Budget set for ${cat}`,'success');
         } catch(err){ console.error('saveBudget error:', err); showFormError('budgetFormError','Failed: '+(err.message||String(err))); }
+    });
+
+    // Payment method budget
+    document.getElementById('savePaymentBudget')?.addEventListener('click', async () => {
+        showFormError('paymentBudgetFormError','');
+        const method = document.getElementById('paymentBudgetMethodSelect').value;
+        const amt    = parseFloat(document.getElementById('paymentBudgetAmountInput').value);
+        if (!method) { showFormError('paymentBudgetFormError','Select a payment method'); return; }
+        if (!amt||amt<=0) { showFormError('paymentBudgetFormError','Enter a valid amount'); return; }
+        if (!currentUser) { showFormError('paymentBudgetFormError','Not signed in — please refresh the page.'); return; }
+        try {
+            const newId = await dbUpsertPaymentBudget(method, amt);
+            const idx = financeData.paymentBudgets.findIndex(b=>b.method===method);
+            if (idx>=0) financeData.paymentBudgets[idx].amount=amt;
+            else financeData.paymentBudgets.push({ id:newId, method, amount:amt });
+            showFormError('paymentBudgetFormError','');
+            renderBudgetPage();
+            showToast(`Budget set for ${method}`,'success');
+        } catch(err) { console.error('savePaymentBudget error:', err); showFormError('paymentBudgetFormError','Failed: '+(err.message||String(err))); }
+    });
+
+    // Payment methods management
+    document.getElementById('addPaymentMethodBtn')?.addEventListener('click', async () => {
+        const inp = document.getElementById('newPaymentMethodInput');
+        const val = inp?.value.trim();
+        if (!val) { showToast('Enter a method name','warning'); return; }
+        const methods = financeData.settings.paymentMethods || DEFAULT_PAYMENT_METHODS;
+        if (methods.includes(val)) { showToast('Method already exists','warning'); return; }
+        financeData.settings.paymentMethods = [...methods, val];
+        await syncProfile();
+        if (inp) inp.value = '';
+        renderPaymentMethodsSettings();
+        showToast(`"${val}" added`,'success');
     });
 
     // Settings

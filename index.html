@@ -293,6 +293,13 @@
                 <div id="budgetOverview" class="budget-overview-list"></div>
             </div>
         </div>
+        <div class="card">
+            <div class="card-header">
+                <h3>Spending by Payment Method</h3>
+                <span class="card-badge" id="pmWidgetMonthLabel"></span>
+            </div>
+            <div id="paymentMethodWidget" class="pm-widget-list"></div>
+        </div>
     </section>
 
     <!-- ══════════════ INCOME ══════════════ -->
@@ -304,7 +311,7 @@
                     <option value="">All Categories</option>
                     <option>Salary</option><option>Freelance</option><option>Bonus</option>
                     <option>Investment</option><option>Business</option><option>Refund</option>
-                    <option>Gift</option><option>Other</option>
+                    <option>Gift</option><option>Opening Balance</option><option>Other</option>
                 </select>
                 <select class="filter-select" id="incomeDateFilter">
                     <option value="all">All Time</option>
@@ -321,7 +328,10 @@
                     <option value="">Select Month…</option>
                 </select>
             </div>
-            <button class="btn btn-success" id="addIncomeBtn">+ Add Income</button>
+            <div class="toolbar-right">
+                <button class="btn btn-ghost btn-sm" id="openingBalanceBtn">&#9654; Opening Balance</button>
+                <button class="btn btn-success" id="addIncomeBtn">+ Add Income</button>
+            </div>
         </div>
         <div class="card">
             <table class="data-table" id="incomeTable">
@@ -380,6 +390,7 @@
                         <th data-sort="category">Category &#8597;</th>
                         <th data-sort="description">Description &#8597;</th>
                         <th data-sort="amount">Amount &#8597;</th>
+                        <th>Paid Using</th>
                         <th>Comments</th>
                         <th>Actions</th>
                     </tr>
@@ -443,6 +454,7 @@
                         <th data-sort="category">Category &#8597;</th>
                         <th data-sort="description">Description &#8597;</th>
                         <th data-sort="amount">Amount &#8597;</th>
+                        <th>Paid Using</th>
                         <th>Notes</th>
                         <th>Actions</th>
                     </tr>
@@ -487,6 +499,16 @@
                 <div class="chart-wrap chart-wrap-tall"><canvas id="budgetChart"></canvas></div>
             </div>
         </div>
+        <div class="grid-2col">
+            <div class="card chart-card">
+                <div class="card-header"><h3>Spending by Payment Method</h3><span class="card-badge">Breakdown</span></div>
+                <div class="chart-wrap"><canvas id="paymentPieChart"></canvas></div>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header"><h3>Payment Method Amounts</h3><span class="card-badge">Highest to Lowest</span></div>
+                <div class="chart-wrap chart-wrap-tall"><canvas id="paymentBarChart"></canvas></div>
+            </div>
+        </div>
     </section>
 
     <!-- ══════════════ REPORTS ══════════════ -->
@@ -497,6 +519,7 @@
                     <option value="finMonth">Financial Month Report</option>
                     <option value="yearly">Yearly Report</option>
                     <option value="category">Category Report</option>
+                    <option value="payment">Payment Method Report</option>
                 </select>
                 <select class="filter-select" id="reportYear"></select>
             </div>
@@ -511,6 +534,25 @@
     <!-- ══════════════ BUDGET ══════════════ -->
     <section class="content-section" id="section-budget">
         <div class="grid-2col">
+            <div class="card">
+                <div class="card-header"><h3>Payment Method Budget</h3></div>
+                <div class="budget-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Payment Method</label>
+                            <select class="form-input" id="paymentBudgetMethodSelect">
+                                <option value="">Select Method</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Amount (₹)</label>
+                            <input type="number" class="form-input" id="paymentBudgetAmountInput" placeholder="Budget amount" />
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" id="savePaymentBudget">Set Budget</button>
+                    <div id="paymentBudgetFormError" style="display:none;background:var(--expense-color,#f44);color:#fff;padding:8px 12px;border-radius:6px;font-size:13px;margin-top:8px"></div>
+                </div>
+            </div>
             <div class="card">
                 <div class="card-header"><h3>Monthly Budget</h3></div>
                 <div class="budget-form">
@@ -554,11 +596,31 @@
             </div>
             <div id="budgetProgressList" class="budget-progress-list"></div>
         </div>
+        <div class="card">
+            <div class="card-header">
+                <h3>Payment Method Utilization</h3>
+                <span class="card-badge" id="pmBudgetMonthLabel"></span>
+            </div>
+            <div id="paymentBudgetProgressList" class="budget-progress-list"></div>
+        </div>
     </section>
 
     <!-- ══════════════ SETTINGS & DATA ══════════════ -->
     <section class="content-section" id="section-settings">
         <div class="grid-2col">
+            <div class="card">
+                <div class="card-header"><h3>Payment Methods</h3></div>
+                <div class="settings-list" id="paymentMethodsList"></div>
+                <div class="settings-list" style="margin-top:0;border-top:1px solid var(--border-color)">
+                    <div class="setting-item" style="flex-direction:column;align-items:stretch;gap:8px">
+                        <p class="setting-name">Add Custom Method</p>
+                        <div style="display:flex;gap:8px">
+                            <input type="text" class="form-input" id="newPaymentMethodInput" placeholder="e.g. Wallet, BNPL" style="flex:1" />
+                            <button class="btn btn-primary btn-sm" id="addPaymentMethodBtn">Add</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div class="card">
                 <div class="card-header"><h3>App Settings</h3></div>
                 <div class="settings-list">
@@ -1014,9 +1076,17 @@
                     <input type="time" class="form-input" id="expenseTime" required />
                 </div>
             </div>
-            <div class="form-group">
-                <label class="form-label">Description *</label>
-                <input type="text" class="form-input" id="expenseDescription" placeholder="What did you spend on?" required />
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Description *</label>
+                    <input type="text" class="form-input" id="expenseDescription" placeholder="What did you spend on?" required />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Paid Using *</label>
+                    <select class="form-input" id="expensePaidUsing" required>
+                        <option value="Cash">Cash</option>
+                    </select>
+                </div>
             </div>
             <div class="form-group">
                 <label class="form-label">Additional Comments</label>
@@ -1075,6 +1145,25 @@
                 <button type="submit" class="btn btn-success">Save Income</button>
             </div>
         </form>
+    </div>
+</div>
+
+<!-- Opening Balance Modal -->
+<div class="modal-overlay" id="openingBalanceModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Opening Balance</h2>
+            <button class="modal-close" data-modal="openingBalanceModal">&#10005;</button>
+        </div>
+        <div style="padding:0 24px 8px">
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">Enter the starting balance for each payment method at the beginning of <strong id="obMonthLabel"></strong>. Existing opening balance entries for this month will be replaced.</p>
+            <div id="obMethodsList" style="display:flex;flex-direction:column;gap:10px;max-height:340px;overflow-y:auto;padding-right:4px"></div>
+        </div>
+        <div id="obFormError" style="display:none;background:var(--expense-color,#f44);color:#fff;padding:8px 12px;border-radius:6px;font-size:13px;margin:0 24px 8px"></div>
+        <div class="modal-actions">
+            <button type="button" class="btn btn-ghost" data-modal="openingBalanceModal">Cancel</button>
+            <button type="button" class="btn btn-success" id="saveOpeningBalanceBtn">Save Opening Balance</button>
+        </div>
     </div>
 </div>
 
