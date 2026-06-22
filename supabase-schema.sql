@@ -96,13 +96,17 @@ CREATE INDEX IF NOT EXISTS idx_payment_budgets_user   ON payment_budgets (user_i
 -- ── 4. AUTO-CREATE PROFILE ON SIGNUP ──────────────────────────
 
 CREATE OR REPLACE FUNCTION handle_new_user()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
 BEGIN
-    INSERT INTO profiles (id) VALUES (NEW.id)
+    INSERT INTO public.profiles (id) VALUES (NEW.id)
     ON CONFLICT (id) DO NOTHING;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created

@@ -11,9 +11,11 @@ Stage all changes, create a commit, push to GitHub, then deploy to Vercel produc
 5. Commit with that message (include Co-Authored-By trailer)
 6. Run `git push`
 7. Deploy to Vercel: run `vercel --prod --yes` using Node 20 (`nvm use 20 && vercel --prod --yes`)
-8. Report the Vercel URL when done
+8. After deploy, check the deployment URL from the output (e.g. `personal-tracker-XXXXX-codewithnaveenxy-5711s-projects.vercel.app`) and run: `vercel alias set <deployment-url> personal-tracker-nk.vercel.app` to ensure the canonical alias is updated
+9. Report the Vercel URL when done
 
 ## Rules
 - Never use `--no-verify`
 - If git push fails (not up to date), run `git pull --rebase` first then push again
 - The Vercel project is `personal-tracker` aliased to `personal-tracker-nk.vercel.app`
+- Always re-alias after deploy — Vercel doesn't always update the custom alias automatically

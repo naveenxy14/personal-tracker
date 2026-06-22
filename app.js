@@ -198,17 +198,20 @@ function setAuthMessage(msg, type = 'error') {
    SUPABASE DATA LAYER
    ============================================================ */
 async function loadAllData(userId, signal) {
-    const abortOpt = signal ? { signal } : {};
+    // Helper: throw immediately if signal was aborted (Supabase returns errors instead
+    // of throwing on abort, so we need explicit checks to exit early)
+    function checkAbort() {
+        if (signal?.aborted) throw new DOMException('Load aborted', 'AbortError');
+    }
 
-    // Throw immediately if already aborted before we start
-    if (signal?.aborted) throw new DOMException('Load aborted', 'AbortError');
+    checkAbort();
 
     // Profile / settings
     const { data: profile, error: profileErr } = await sb.from('profiles').select('*').eq('id', userId).single().abortSignal(signal);
+    checkAbort();
     if (profileErr) {
         console.warn('profiles query error:', profileErr);
         if (profileErr.code !== 'PGRST116') {
-            // Surface in connection diagnostic but keep loading — don't throw
             const el = document.getElementById('dbStatus');
             if (el) { el.style.background='rgba(239,68,68,0.12)'; el.style.color='var(--expense-color,#ef4444)'; el.textContent='✕ DB error: '+profileErr.message; }
         }
@@ -222,37 +225,42 @@ async function loadAllData(userId, signal) {
             paymentMethods:    Array.isArray(profile.payment_methods) ? profile.payment_methods : [...DEFAULT_PAYMENT_METHODS]
         };
     } else if (!profileErr) {
-        // No profile yet — create one (first login)
+        // No profile yet — create one (first login, trigger may have missed)
         const { error: pInsErr } = await sb.from('profiles').insert({ id: userId, payment_methods: DEFAULT_PAYMENT_METHODS });
         if (pInsErr) console.warn('profile insert error:', pInsErr);
     }
 
     // Incomes
     const { data: incomes, error: incErr } = await sb.from('incomes').select('*').eq('user_id', userId).order('date', { ascending: false }).abortSignal(signal);
+    checkAbort();
     if (incErr) console.warn('incomes query error:', incErr);
     financeData.incomes = (incomes || []).map(dbToIncome);
 
     // Expenses
     const { data: expenses, error: expErr } = await sb.from('expenses').select('*').eq('user_id', userId).order('date', { ascending: false }).abortSignal(signal);
+    checkAbort();
     if (expErr) console.warn('expenses query error:', expErr);
     financeData.expenses = (expenses || []).map(dbToExpense);
 
     // Budgets
     const { data: budgets, error: budErr } = await sb.from('budgets').select('*').eq('user_id', userId).abortSignal(signal);
+    checkAbort();
     if (budErr) console.warn('budgets query error:', budErr);
     financeData.budgets = (budgets || []).map(r => ({ id: r.id, category: r.category, amount: r.amount }));
 
     // Payment budgets
     const { data: paymentBudgets, error: pbErr } = await sb.from('payment_budgets').select('*').eq('user_id', userId).abortSignal(signal);
+    checkAbort();
     if (pbErr) console.warn('payment_budgets query error:', pbErr);
     financeData.paymentBudgets = (paymentBudgets || []).map(r => ({ id: r.id, method: r.method, amount: parseFloat(r.amount) }));
 
     financeData.metadata.lastUpdated = new Date().toISOString();
 
-    // Seed sample data only for truly new users (check localStorage + DB flag)
+    // Seed only for truly new users. Include profileErr so a failed profile load
+    // (e.g. trigger misconfiguration) doesn't accidentally trigger seeding.
     const seedKey = `fintrack_seeded_${userId}`;
     const alreadySeeded = localStorage.getItem(seedKey) || profile?.has_seeded;
-    const anyQueryFailed = incErr || expErr || budErr;
+    const anyQueryFailed = profileErr || incErr || expErr || budErr;
     if (!anyQueryFailed && !alreadySeeded && financeData.incomes.length === 0 && financeData.expenses.length === 0) {
         showLoader('Setting up sample data for you…');
         await generateSampleDataForUser(userId);
