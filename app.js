@@ -39,6 +39,7 @@ function initSupabase() {
 }
 
 let _loginInProgress = false;
+let _loadAbortController = null;
 
 async function onLogin(user) {
     if (_loginInProgress) return;
@@ -47,11 +48,31 @@ async function onLogin(user) {
     currentUser = user;
     updateUserUI(user);
     hideAuthScreen();
+
+    // Stagger simultaneous tab starts — if another tab just started loading
+    // (within 1.5s), wait 2s so queries don't all hit Supabase at once.
+    const lastStart = parseInt(localStorage.getItem('fintrack_tab_start') || '0');
+    if (Date.now() - lastStart < 1500) await new Promise(r => setTimeout(r, 2000));
+    localStorage.setItem('fintrack_tab_start', Date.now().toString());
+
+    // Per-load AbortController: cancel all in-flight queries after 12s
+    if (_loadAbortController) _loadAbortController.abort();
+    _loadAbortController = new AbortController();
+    const signal = _loadAbortController.signal;
+
     showLoader('Loading your data…');
     try {
-        await loadAllData(user.id);
+        await loadAllData(user.id, signal);
     } catch(e) {
-        showToast('Error loading data: ' + e.message, 'error');
+        if (e.name === 'AbortError' || e.message?.includes('aborted') || e.message?.includes('timed out')) {
+            showLoaderError('Connection too slow — tap to retry', () => {
+                _loginInProgress = false;
+                onLogin(user);
+            });
+            return;
+        }
+        console.error('onLogin error:', e);
+        showToast('Error loading data: ' + (e.message || String(e)), 'error');
     } finally {
         hideLoader();
         _loginInProgress = false;
@@ -59,6 +80,14 @@ async function onLogin(user) {
     populateFMPickers();
     applyTheme(financeData.settings.theme || 'dark');
     navigate('dashboard');
+}
+
+function showLoaderError(msg, onRetry) {
+    const ol = document.getElementById('loadingOverlay');
+    const lt = document.getElementById('loadingText');
+    if (lt) lt.innerHTML = `<span style="color:var(--expense-color,#ef4444)">${msg}</span>
+        <br><button class="btn btn-primary btn-sm" style="margin-top:12px" id="loaderRetryBtn">Retry</button>`;
+    document.getElementById('loaderRetryBtn')?.addEventListener('click', () => { hideLoader(); onRetry(); });
 }
 
 function usernameToEmail(username) {
@@ -112,11 +141,14 @@ async function signUp(username) {
 }
 
 async function signOut() {
+    _loadAbortController?.abort();
+    _loginInProgress = false;
     await sb.auth.signOut();
     currentUser = null;
-    financeData.incomes  = [];
-    financeData.expenses = [];
-    financeData.budgets  = [];
+    financeData.incomes        = [];
+    financeData.expenses       = [];
+    financeData.budgets        = [];
+    financeData.paymentBudgets = [];
     showAuthScreen();
     showToast('Signed out', 'info');
 }
@@ -149,11 +181,10 @@ function showLoader(msg = 'Loading…') {
     const lt = document.getElementById('loadingText');
     if (ol) ol.classList.remove('hidden');
     if (lt) lt.textContent = msg;
-    // Safety fallback: auto-hide after 20s in case something goes wrong
+    // Safety fallback: abort all in-flight queries and show retry after 12s
     _loaderTimer = setTimeout(() => {
-        hideLoader();
-        showToast('Loading timed out — please refresh.', 'error');
-    }, 20000);
+        _loadAbortController?.abort();
+    }, 12000);
 }
 function hideLoader() {
     clearTimeout(_loaderTimer);
@@ -169,9 +200,14 @@ function setAuthMessage(msg, type = 'error') {
 /* ============================================================
    SUPABASE DATA LAYER
    ============================================================ */
-async function loadAllData(userId) {
+async function loadAllData(userId, signal) {
+    const abortOpt = signal ? { signal } : {};
+
+    // Throw immediately if already aborted before we start
+    if (signal?.aborted) throw new DOMException('Load aborted', 'AbortError');
+
     // Profile / settings
-    const { data: profile, error: profileErr } = await sb.from('profiles').select('*').eq('id', userId).single();
+    const { data: profile, error: profileErr } = await sb.from('profiles').select('*').eq('id', userId).single().abortSignal(signal);
     if (profileErr) {
         console.warn('profiles query error:', profileErr);
         if (profileErr.code !== 'PGRST116') {
@@ -195,22 +231,22 @@ async function loadAllData(userId) {
     }
 
     // Incomes
-    const { data: incomes, error: incErr } = await sb.from('incomes').select('*').eq('user_id', userId).order('date', { ascending: false });
+    const { data: incomes, error: incErr } = await sb.from('incomes').select('*').eq('user_id', userId).order('date', { ascending: false }).abortSignal(signal);
     if (incErr) console.warn('incomes query error:', incErr);
     financeData.incomes = (incomes || []).map(dbToIncome);
 
     // Expenses
-    const { data: expenses, error: expErr } = await sb.from('expenses').select('*').eq('user_id', userId).order('date', { ascending: false });
+    const { data: expenses, error: expErr } = await sb.from('expenses').select('*').eq('user_id', userId).order('date', { ascending: false }).abortSignal(signal);
     if (expErr) console.warn('expenses query error:', expErr);
     financeData.expenses = (expenses || []).map(dbToExpense);
 
     // Budgets
-    const { data: budgets, error: budErr } = await sb.from('budgets').select('*').eq('user_id', userId);
+    const { data: budgets, error: budErr } = await sb.from('budgets').select('*').eq('user_id', userId).abortSignal(signal);
     if (budErr) console.warn('budgets query error:', budErr);
     financeData.budgets = (budgets || []).map(r => ({ id: r.id, category: r.category, amount: r.amount }));
 
     // Payment budgets
-    const { data: paymentBudgets, error: pbErr } = await sb.from('payment_budgets').select('*').eq('user_id', userId);
+    const { data: paymentBudgets, error: pbErr } = await sb.from('payment_budgets').select('*').eq('user_id', userId).abortSignal(signal);
     if (pbErr) console.warn('payment_budgets query error:', pbErr);
     financeData.paymentBudgets = (paymentBudgets || []).map(r => ({ id: r.id, method: r.method, amount: parseFloat(r.amount) }));
 
