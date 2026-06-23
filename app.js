@@ -547,9 +547,12 @@ function finMonthRangeLabel(fmMonth, fmYear) {
 
 function getFinancialMonthsList(count = 12) {
     const list = [], seen = new Set();
-    const now  = new Date();
+    const now = new Date();
+    // Use today's actual day (clamped to 28 to avoid month-end overflow) so that
+    // when today is after finMonthStartDay the current FM is included in the list.
+    const safeDay = Math.min(now.getDate(), 28);
     for (let i = 0; i < count + 3; i++) {
-        const d  = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const d  = new Date(now.getFullYear(), now.getMonth() - i, safeDay);
         const fm = getFinancialMonth(d);
         const key = `${fm.year}-${fm.month}`;
         if (!seen.has(key)) { seen.add(key); list.push({ key, month: fm.month, year: fm.year }); }
@@ -902,40 +905,45 @@ function renderDashFMSelector() {
 }
 
 function renderDashboard() {
-    const allIncome  = financeData.incomes;
-    const allExpense = financeData.expenses;
-    const totalInc   = allIncome.reduce((s,r)=>s+r.amount,0);
-    const totalExp   = allExpense.reduce((s,r)=>s+r.amount,0);
-    const balance    = totalInc - totalExp;
-    const savingRate = totalInc>0 ? ((totalInc-totalExp)/totalInc*100).toFixed(1) : 0;
+    const fm     = dashActiveFM || currentFinancialMonth();
+    const fmName = finMonthName(fm.month, fm.year);
+    const fmRange = finMonthRangeLabel(fm.month, fm.year);
 
-    const fm    = dashActiveFM || currentFinancialMonth();
-    const fmInc = allIncome.filter(r=>isInFinancialMonth(r.date,fm.month,fm.year)).reduce((s,r)=>s+r.amount,0);
-    const fmExp = allExpense.filter(r=>isInFinancialMonth(r.date,fm.month,fm.year)).reduce((s,r)=>s+r.amount,0);
+    // FM-scoped metrics (top 4 cards + budget cards)
+    const fmInc = financeData.incomes.filter(r=>isInFinancialMonth(r.date,fm.month,fm.year)).reduce((s,r)=>s+r.amount,0);
+    const fmExp = financeData.expenses.filter(r=>isInFinancialMonth(r.date,fm.month,fm.year)).reduce((s,r)=>s+r.amount,0);
+    const fmBalance  = fmInc - fmExp;
+    const fmSaveRate = fmInc>0 ? ((fmInc-fmExp)/fmInc*100).toFixed(1) : 0;
     const monthBudget  = financeData.settings.monthlyBudget||50000;
     const budgetUtil   = monthBudget>0 ? Math.min((fmExp/monthBudget)*100,999).toFixed(1) : 0;
     const budgetRemain = Math.max(monthBudget-fmExp,0);
 
-    setText('totalIncome',     fmt(totalInc));
-    setText('totalExpenses',   fmt(totalExp));
-    setText('currentBalance',  fmt(balance));
-    setText('savingsRate',     `${savingRate}%`);
-    setText('fmIncome',        fmt(fmInc));
-    setText('fmExpense',       fmt(fmExp));
+    // All-time totals (cards 5-6 "All Time Income / All Time Expenses")
+    const allTimeInc = financeData.incomes.reduce((s,r)=>s+r.amount,0);
+    const allTimeExp = financeData.expenses.reduce((s,r)=>s+r.amount,0);
+
+    // Top 4: FM-scoped (respond to month selector)
+    setText('totalIncome',     fmt(fmInc));
+    setText('totalExpenses',   fmt(fmExp));
+    setText('currentBalance',  fmt(fmBalance));
+    setText('savingsRate',     `${fmSaveRate}%`);
+    // Cards 5-6: all-time context
+    setText('fmIncome',        fmt(allTimeInc));
+    setText('fmExpense',       fmt(allTimeExp));
     setText('budgetUtil',      `${budgetUtil}%`);
     setText('budgetRemaining', fmt(budgetRemain));
 
     const fmBadge = document.getElementById('finMonthBadge');
-    if (fmBadge) fmBadge.textContent = `${finMonthName(fm.month,fm.year)} FM`;
+    if (fmBadge) fmBadge.textContent = `${fmName} FM`;
 
     renderDashFMSelector();
 
-    setText('incomeTrend',    `All time • ${allIncome.length} records`);
-    setText('expenseTrend',   `All time • ${allExpense.length} records`);
-    setText('balanceTrend',   balance>=0 ? '✓ Positive balance' : '⚠ Negative balance');
-    setText('savingsTrend',   parseFloat(savingRate)>=20 ? '✓ Good savings rate' : 'Aim for 20%+');
-    setText('fmIncomeTrend',  `${finMonthName(fm.month,fm.year)} • ${finMonthRangeLabel(fm.month,fm.year)}`);
-    setText('fmExpenseTrend', `${finMonthName(fm.month,fm.year)} • ${finMonthRangeLabel(fm.month,fm.year)}`);
+    setText('incomeTrend',    `${fmName} • ${fmRange}`);
+    setText('expenseTrend',   `${fmName} • ${fmRange}`);
+    setText('balanceTrend',   fmBalance>=0 ? '✓ Positive balance' : '⚠ Negative balance');
+    setText('savingsTrend',   parseFloat(fmSaveRate)>=20 ? '✓ Good savings rate' : 'Aim for 20%+');
+    setText('fmIncomeTrend',  `${financeData.incomes.length} records`);
+    setText('fmExpenseTrend', `${financeData.expenses.length} records`);
     setText('budgetTrend',    budgetUtil>100 ? '⚠ Over budget!' : `${(100-budgetUtil).toFixed(1)}% remaining`);
     setText('remainingTrend', `Budget: ${fmt(monthBudget)}`);
 
@@ -949,13 +957,9 @@ function renderDashboard() {
 function renderRecentTransactions() {
     const container = document.getElementById('recentTransactions');
     if (!container) return;
-    const activeFM = dashActiveFM;
-    let incomes  = financeData.incomes.map(r=>({...r,type:'income'}));
-    let expenses = financeData.expenses.map(r=>({...r,type:'expense'}));
-    if (activeFM) {
-        incomes  = incomes.filter(r=>isInFinancialMonth(r.date,activeFM.month,activeFM.year));
-        expenses = expenses.filter(r=>isInFinancialMonth(r.date,activeFM.month,activeFM.year));
-    }
+    const activeFM = dashActiveFM || currentFinancialMonth();
+    let incomes  = financeData.incomes.map(r=>({...r,type:'income'})).filter(r=>isInFinancialMonth(r.date,activeFM.month,activeFM.year));
+    let expenses = financeData.expenses.map(r=>({...r,type:'expense'})).filter(r=>isInFinancialMonth(r.date,activeFM.month,activeFM.year));
     const all = [...incomes,...expenses].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,10);
     if (!all.length) { container.innerHTML='<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No transactions</div></div>'; return; }
     container.innerHTML = all.map(r=>`
